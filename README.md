@@ -17,7 +17,7 @@ The generated app and DMG are:
 
 ```sh
 /Users/cgx/Documents/Switcher/src-tauri/target/release/bundle/macos/Refill.app
-/Users/cgx/Documents/Switcher/src-tauri/target/release/bundle/dmg/Refill_3.0.1_aarch64.dmg
+/Users/cgx/Documents/Switcher/src-tauri/target/release/bundle/dmg/Refill_3.0.2_aarch64.dmg
 ```
 
 v3 uses the same profile layout as v2:

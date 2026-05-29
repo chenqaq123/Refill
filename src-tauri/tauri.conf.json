@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Refill",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "identifier": "local.refill.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -29,6 +29,10 @@
     "active": true,
     "targets": "all",
     "category": "DeveloperTool",
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.icns"
+    ],
     "shortDescription": "Codex account switcher",
     "longDescription": "Codex account, API provider, usage, and shared history switcher."
   }
