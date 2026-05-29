@@ -1,0 +1,108 @@
+export type ProfileKind = "official" | "api";
+
+export type UsageWindow = {
+  label: string;
+  remainingPercent: number;
+  resetsAt?: number | null;
+  resetText: string;
+  isEstimatedRecovered: boolean;
+};
+
+export type UsageSnapshot = {
+  timestamp: string;
+  primary?: UsageWindow | null;
+  secondary?: UsageWindow | null;
+  hasEstimatedRecovery: boolean;
+};
+
+export type ApiProvider = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  model: string;
+  providerId: string;
+  keyStatus: "exists" | "missing";
+  createdAt: string;
+};
+
+export type ProfileDiagnostics = {
+  profilePath: string;
+  codexHomePath: string;
+  sessionsShared: boolean;
+  sessionIndexShared: boolean;
+  desktopStateShared: boolean;
+  workspaceShared: boolean;
+  configExists: boolean;
+  authExists: boolean;
+  keychainReady: boolean;
+};
+
+export type Profile = {
+  id: string;
+  kind: ProfileKind;
+  title: string;
+  subtitle: string;
+  primaryPill: string;
+  isActive: boolean;
+  isReady: boolean;
+  usage?: UsageSnapshot | null;
+  provider?: ApiProvider | null;
+  diagnostics: ProfileDiagnostics;
+};
+
+export type DashboardState = {
+  profiles: Profile[];
+  unmanagedCurrent?: Profile | null;
+  activeLabel: string;
+  profileRoot: string;
+  codexHome: string;
+  sharedHistoryRoot: string;
+  lastSyncedAt: string;
+};
+
+export type ProviderInput = {
+  name: string;
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+};
+
+export type ProviderUpdateInput = {
+  name: string;
+  baseUrl: string;
+  model: string;
+  apiKey?: string | null;
+};
+
+export type SwitchStage =
+  | "quitting_codex"
+  | "syncing_current"
+  | "preparing_target"
+  | "sharing_history"
+  | "linking_codex_home"
+  | "launching_codex"
+  | "done"
+  | "failed";
+
+export type SwitchProgress = {
+  profileId: string;
+  stage: SwitchStage;
+  message: string;
+  percent?: number | null;
+};
+
+export type SwitchResult = {
+  profileId: string;
+  launched: boolean;
+};
+
+export type ProviderValidation = {
+  ok: boolean;
+  message: string;
+};
+
+export type AppSettings = {
+  refreshIntervalSeconds: number;
+  shareHistory: boolean;
+  codexAppName: string;
+};

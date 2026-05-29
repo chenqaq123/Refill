@@ -2,6 +2,35 @@
 
 This repo keeps multiple Codex logins separated by profile. It does not copy tokens into scripts. Each profile gets its own `CODEX_HOME` directory under `~/.codex-profiles`.
 
+## Refill v3 Tauri Preview
+
+v3 is a parallel Tauri desktop console named **Refill**. It keeps the SwiftUI v2 app intact, but adds a modern React/Tailwind UI with a Rust backend for profile scanning, API provider management, usage display, shared history diagnostics, and background switching progress.
+
+Build the v3 app:
+
+```sh
+npm install
+npm run tauri:build
+```
+
+The generated app and DMG are:
+
+```sh
+/Users/cgx/Documents/Switcher/src-tauri/target/release/bundle/macos/Refill.app
+/Users/cgx/Documents/Switcher/src-tauri/target/release/bundle/dmg/Refill_3.0.0_aarch64.dmg
+```
+
+v3 uses the same profile layout as v2:
+
+- `~/.codex-profiles`
+- `.codex-switcher/provider.json`
+- Keychain service `local.codex.account-switcher.<providerID>`
+- `_shared-history/sessions`
+- `_shared-history/session_index.jsonl`
+- `_shared-history/desktop-state`
+
+The v3 UI is a desktop console: official accounts and API providers are grouped into cards, switching emits progress instead of blocking the UI, and the detail panel exposes diagnostics without showing sensitive keys.
+
 ## Mac App
 
 Build the double-clickable app:

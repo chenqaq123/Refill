@@ -1,0 +1,507 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use base64::prelude::*;
+use chrono::Utc;
+use serde_json::Value;
+
+use crate::models::{
+    AccountInfo, ApiProvider, DashboardState, Profile, ProfileDiagnostics, RawUsageSnapshot,
+};
+
+use super::{provider_store::ProviderStore, usage_service};
+
+pub struct ProfileStore {
+    home: PathBuf,
+    provider_store: ProviderStore,
+}
+
+impl Default for ProfileStore {
+    fn default() -> Self {
+        Self {
+            home: dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")),
+            provider_store: ProviderStore::default(),
+        }
+    }
+}
+
+impl ProfileStore {
+    pub fn codex_home(&self) -> PathBuf {
+        self.home.join(".codex")
+    }
+
+    pub fn profile_root(&self) -> PathBuf {
+        self.home.join(".codex-profiles")
+    }
+
+    pub fn shared_history_root(&self) -> PathBuf {
+        self.profile_root().join("_shared-history")
+    }
+
+    pub fn shared_sessions(&self) -> PathBuf {
+        self.shared_history_root().join("sessions")
+    }
+
+    pub fn shared_session_index(&self) -> PathBuf {
+        self.shared_history_root().join("session_index.jsonl")
+    }
+
+    pub fn shared_desktop_state(&self) -> PathBuf {
+        self.shared_history_root().join("desktop-state")
+    }
+
+    pub fn shared_workspace_state(&self) -> PathBuf {
+        self.shared_history_root().join("workspaces.json")
+    }
+
+    pub fn provider_store(&self) -> &ProviderStore {
+        &self.provider_store
+    }
+
+    pub fn profile_url(&self, id: &str) -> PathBuf {
+        self.profile_root().join(id)
+    }
+
+    pub fn refresh_dashboard(&self) -> DashboardState {
+        self.cache_usage_for_active_profile();
+        let profiles = self.profiles();
+        let unmanaged_current = self.current_unmanaged_profile();
+        let active_label = profiles
+            .iter()
+            .find(|profile| profile.is_active)
+            .map(|profile| profile.title.clone())
+            .or_else(|| {
+                unmanaged_current
+                    .as_ref()
+                    .map(|profile| profile.title.clone())
+            })
+            .unwrap_or_else(|| "未连接".to_string());
+
+        DashboardState {
+            profiles,
+            unmanaged_current,
+            active_label,
+            profile_root: self.profile_root().display().to_string(),
+            codex_home: self.codex_home().display().to_string(),
+            shared_history_root: self.shared_history_root().display().to_string(),
+            last_synced_at: Utc::now().to_rfc3339(),
+        }
+    }
+
+    pub fn profiles(&self) -> Vec<Profile> {
+        let active = self.active_profile_id();
+        let unmanaged_info = self.current_unmanaged_account_info();
+        let mut profiles = Vec::new();
+
+        if let Ok(entries) = fs::read_dir(self.profile_root()) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() || !self.is_profile_directory(&path) {
+                    continue;
+                }
+                let id = entry.file_name().to_string_lossy().to_string();
+                let provider_config = self.provider_store.read_provider(&path);
+                let is_provider = provider_config.is_some();
+                let info = if let Some(provider) = &provider_config {
+                    AccountInfo {
+                        name: Some(provider.name.clone()),
+                        email: None,
+                        plan: Some("api".to_string()),
+                        account_id: Some(provider.provider_id.clone()),
+                        subscription_until: None,
+                    }
+                } else {
+                    self.account_info(&path)
+                };
+                let is_active = active.as_deref() == Some(&id)
+                    || (!is_provider
+                        && unmanaged_info
+                            .as_ref()
+                            .map(|current| info.matches(current))
+                            .unwrap_or(false));
+                profiles.push(self.profile_from_parts(id, path, info, provider_config, is_active));
+            }
+        }
+
+        profiles.sort_by(|left, right| {
+            right
+                .is_active
+                .cmp(&left.is_active)
+                .then_with(|| left.kind.cmp(&right.kind))
+                .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
+        });
+        profiles
+    }
+
+    pub fn current_unmanaged_profile(&self) -> Option<Profile> {
+        let codex_home = self.codex_home();
+        if !codex_home.exists() || self.is_codex_home_symlink() {
+            return None;
+        }
+        let info = self.account_info(&codex_home);
+        if self.profile_matching(&info).is_some() {
+            return None;
+        }
+        Some(self.profile_from_parts("__current__".to_string(), codex_home, info, None, true))
+    }
+
+    pub fn current_unmanaged_account_info(&self) -> Option<AccountInfo> {
+        let codex_home = self.codex_home();
+        if !codex_home.exists() || self.is_codex_home_symlink() {
+            return None;
+        }
+        Some(self.account_info(&codex_home))
+    }
+
+    pub fn active_profile_id(&self) -> Option<String> {
+        let destination = fs::read_link(self.codex_home()).ok()?;
+        let resolved = if destination.is_absolute() {
+            destination
+        } else {
+            self.home.join(destination)
+        };
+        let root = self.profile_root();
+        let relative = resolved.strip_prefix(root).ok()?;
+        Some(relative.to_string_lossy().to_string())
+    }
+
+    pub fn is_codex_home_symlink(&self) -> bool {
+        fs::symlink_metadata(self.codex_home())
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false)
+    }
+
+    pub fn is_profile_directory(&self, path: &Path) -> bool {
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            return false;
+        };
+        !name.starts_with('.')
+            && name != "_shared-history"
+            && (path.join("auth.json").exists() || self.provider_store.is_provider_profile(path))
+    }
+
+    pub fn account_info(&self, dir: &Path) -> AccountInfo {
+        let Ok(data) = fs::read(dir.join("auth.json")) else {
+            return AccountInfo::default();
+        };
+        let Ok(root) = serde_json::from_slice::<Value>(&data) else {
+            return AccountInfo::default();
+        };
+        let tokens = root.get("tokens").unwrap_or(&Value::Null);
+        let id_payload = tokens
+            .get("id_token")
+            .and_then(Value::as_str)
+            .and_then(decode_jwt);
+        let access_payload = tokens
+            .get("access_token")
+            .and_then(Value::as_str)
+            .and_then(decode_jwt);
+        let auth_claims = id_payload
+            .as_ref()
+            .and_then(|value| value.get("https://api.openai.com/auth"))
+            .or_else(|| {
+                access_payload
+                    .as_ref()
+                    .and_then(|value| value.get("https://api.openai.com/auth"))
+            });
+        let profile_claims = access_payload
+            .as_ref()
+            .and_then(|value| value.get("https://api.openai.com/profile"));
+
+        AccountInfo {
+            name: first_string(&[
+                id_payload.as_ref().and_then(|value| value.get("name")),
+                access_payload.as_ref().and_then(|value| value.get("name")),
+            ]),
+            email: first_string(&[
+                id_payload.as_ref().and_then(|value| value.get("email")),
+                profile_claims.and_then(|value| value.get("email")),
+            ]),
+            plan: first_string(&[
+                auth_claims.and_then(|value| value.get("chatgpt_plan_type")),
+                auth_claims.and_then(|value| value.get("plan_type")),
+            ]),
+            account_id: first_string(&[
+                tokens.get("account_id"),
+                auth_claims.and_then(|value| value.get("chatgpt_account_id")),
+                auth_claims.and_then(|value| value.get("account_id")),
+            ]),
+            subscription_until: first_string(&[
+                auth_claims.and_then(|value| value.get("chatgpt_subscription_active_until"))
+            ]),
+        }
+    }
+
+    pub fn latest_usage_snapshot(&self, id: &str, dir: &Path) -> Option<RawUsageSnapshot> {
+        if Some(id.to_string()) == self.active_profile_id() {
+            if let Some(live) = self.active_usage_snapshot_from_shared_history() {
+                let _ = usage_service::write_usage_cache(dir, &live);
+                return Some(live);
+            }
+        }
+        usage_service::read_usage_cache(dir).or_else(|| {
+            let latest = usage_service::newest_backup_snapshot(
+                &self.shared_history_root().join("backups"),
+                id,
+            );
+            if let Some(snapshot) = &latest {
+                let _ = usage_service::write_usage_cache(dir, snapshot);
+            }
+            latest
+        })
+    }
+
+    pub fn active_usage_snapshot_from_shared_history(&self) -> Option<RawUsageSnapshot> {
+        let active = self.active_profile_id()?;
+        let activated_at = self.read_activation_date(&self.profile_url(&active));
+        usage_service::newest_snapshot(&self.shared_sessions(), activated_at)
+    }
+
+    pub fn cache_usage_for_active_profile(&self) {
+        let Some(active) = self.active_profile_id() else {
+            return;
+        };
+        let dir = self.profile_url(&active);
+        if self.provider_store.read_provider(&dir).is_some() {
+            return;
+        }
+        if let Some(snapshot) = self.active_usage_snapshot_from_shared_history() {
+            let _ = usage_service::write_usage_cache(&dir, &snapshot);
+        }
+    }
+
+    pub fn read_activation_date(&self, profile_dir: &Path) -> Option<chrono::DateTime<Utc>> {
+        let text = fs::read_to_string(profile_dir.join(".codex-switcher").join("activated_at.txt"))
+            .ok()?;
+        usage_service::parse_date(text.trim())
+    }
+
+    pub fn write_activation_date(&self, profile_dir: &Path) -> Result<(), String> {
+        let dir = profile_dir.join(".codex-switcher");
+        fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        fs::write(dir.join("activated_at.txt"), Utc::now().to_rfc3339())
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn is_desktop_ready(&self, dir: &Path) -> bool {
+        if let Some(provider) = self.provider_store.read_provider(dir) {
+            return dir.join("config.toml").exists()
+                && dir.join(".codex-global-state.json").exists()
+                && self.provider_store.key_exists(&provider);
+        }
+        dir.join("auth.json").exists()
+            && dir.join("config.toml").exists()
+            && dir.join("computer-use").exists()
+            && dir.join(".codex-global-state.json").exists()
+    }
+
+    pub fn profile_matching(&self, info: &AccountInfo) -> Option<PathBuf> {
+        let entries = fs::read_dir(self.profile_root()).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.join("auth.json").exists() {
+                continue;
+            }
+            if self.account_info(&path).matches(info) {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    pub fn suggested_profile_id(&self, info: &AccountInfo) -> String {
+        let base = info
+            .email
+            .as_ref()
+            .or(info.name.as_ref())
+            .or(info.account_id.as_ref())
+            .map(String::as_str)
+            .unwrap_or("codex-account");
+        let mut slug = slugify(base);
+        if let Some(plan) = &info.plan {
+            if !plan.is_empty() {
+                slug.push('-');
+                slug.push_str(&plan.to_lowercase());
+            }
+        }
+        let mut candidate = slug.clone();
+        let mut index = 2;
+        while self.profile_url(&candidate).exists() {
+            candidate = format!("{slug}-{index}");
+            index += 1;
+        }
+        candidate
+    }
+
+    pub fn profile_from_id(&self, id: &str) -> Result<Profile, String> {
+        let dir = self.profile_url(id);
+        if !dir.exists() {
+            return Err(format!("profile 不存在：{id}"));
+        }
+        let provider = self.provider_store.read_provider(&dir);
+        let info = if let Some(provider) = &provider {
+            AccountInfo {
+                name: Some(provider.name.clone()),
+                email: None,
+                plan: Some("api".to_string()),
+                account_id: Some(provider.provider_id.clone()),
+                subscription_until: None,
+            }
+        } else {
+            self.account_info(&dir)
+        };
+        Ok(self.profile_from_parts(
+            id.to_string(),
+            dir,
+            info,
+            provider,
+            self.active_profile_id().as_deref() == Some(id),
+        ))
+    }
+
+    fn profile_from_parts(
+        &self,
+        id: String,
+        path: PathBuf,
+        info: AccountInfo,
+        provider_config: Option<crate::models::ApiProviderConfig>,
+        is_active: bool,
+    ) -> Profile {
+        let provider = provider_config.as_ref().map(|config| ApiProvider {
+            id: config.id.clone(),
+            name: config.name.clone(),
+            base_url: config.base_url.clone(),
+            model: config.model.clone(),
+            provider_id: config.provider_id.clone(),
+            key_status: if self.provider_store.key_exists(config) {
+                "exists".to_string()
+            } else {
+                "missing".to_string()
+            },
+            created_at: config.created_at.clone(),
+        });
+        let is_provider = provider.is_some();
+        Profile {
+            id: id.clone(),
+            kind: if is_provider { "api" } else { "official" }.to_string(),
+            title: provider
+                .as_ref()
+                .map(|provider| provider.name.clone())
+                .unwrap_or_else(|| info.title()),
+            subtitle: provider
+                .as_ref()
+                .map(|provider| {
+                    let host = provider
+                        .base_url
+                        .split("//")
+                        .last()
+                        .unwrap_or(&provider.base_url)
+                        .trim_end_matches('/');
+                    format!("{} · {}", provider.model, host)
+                })
+                .unwrap_or_else(|| info.subtitle()),
+            primary_pill: if is_provider {
+                "Responses API".to_string()
+            } else {
+                info.plan_display()
+            },
+            is_active,
+            is_ready: self.is_desktop_ready(&path),
+            usage: if is_provider {
+                None
+            } else {
+                self.latest_usage_snapshot(&id, &path)
+                    .map(usage_service::effective)
+            },
+            provider,
+            diagnostics: self.diagnostics(&path, is_provider),
+        }
+    }
+
+    fn diagnostics(&self, path: &Path, is_provider: bool) -> ProfileDiagnostics {
+        ProfileDiagnostics {
+            profile_path: path.display().to_string(),
+            codex_home_path: self.codex_home().display().to_string(),
+            sessions_shared: is_symlink_to(&path.join("sessions"), &self.shared_sessions()),
+            session_index_shared: is_symlink_to(
+                &path.join("session_index.jsonl"),
+                &self.shared_session_index(),
+            ),
+            desktop_state_shared: self.desktop_state_shared(path),
+            workspace_shared: self.shared_workspace_state().exists(),
+            config_exists: path.join("config.toml").exists(),
+            auth_exists: path.join("auth.json").exists(),
+            keychain_ready: if is_provider {
+                self.provider_store
+                    .read_provider(path)
+                    .map(|provider| self.provider_store.key_exists(&provider))
+                    .unwrap_or(false)
+            } else {
+                false
+            },
+        }
+    }
+
+    fn desktop_state_shared(&self, path: &Path) -> bool {
+        fs::read_dir(path)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| {
+                let name = entry.file_name().to_string_lossy().to_string();
+                name.starts_with("state_")
+                    && name.ends_with(".sqlite")
+                    && is_symlink_to(&entry.path(), &self.shared_desktop_state().join(name))
+            })
+    }
+}
+
+fn first_string(values: &[Option<&Value>]) -> Option<String> {
+    values.iter().flatten().find_map(|value| {
+        value
+            .as_str()
+            .map(str::to_string)
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn decode_jwt(token: &str) -> Option<Value> {
+    let payload = token.split('.').nth(1)?;
+    let data = BASE64_URL_SAFE_NO_PAD.decode(payload).ok()?;
+    serde_json::from_slice(&data).ok()
+}
+
+fn slugify(value: &str) -> String {
+    let mut slug = String::new();
+    for character in value.to_lowercase().chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character);
+        } else if matches!(character, '@' | '.' | '_' | '-') {
+            slug.push('-');
+        } else {
+            slug.push('-');
+        }
+    }
+    while slug.contains("--") {
+        slug = slug.replace("--", "-");
+    }
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        "codex-account".to_string()
+    } else {
+        slug
+    }
+}
+
+fn is_symlink_to(path: &Path, expected: &Path) -> bool {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !meta.file_type().is_symlink() {
+        return false;
+    }
+    fs::read_link(path)
+        .map(|target| target == expected)
+        .unwrap_or(false)
+}

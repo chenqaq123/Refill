@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Refill",
+  "version": "3.0.0",
+  "identifier": "local.refill.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../web-dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Refill",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Codex account switcher",
+    "longDescription": "Codex account, API provider, usage, and shared history switcher."
+  }
+}

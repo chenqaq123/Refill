@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #202123;
+  background: #f6f7f7;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 900px;
+  min-height: 640px;
+  overflow: hidden;
+  user-select: text;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  user-select: none;
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(32, 33, 35, 0.14);
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.glass-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.62)),
+    #f7f8f8;
+  border: 1px solid rgba(32, 33, 35, 0.08);
+  box-shadow: 0 22px 70px rgba(28, 35, 45, 0.08);
+}
+
+.card-hover {
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background 180ms ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-1px);
+  border-color: rgba(35, 120, 238, 0.3);
+  box-shadow: 0 16px 42px rgba(28, 35, 45, 0.09);
+}
+
+.pressable {
+  transition:
+    transform 140ms ease,
+    box-shadow 180ms ease,
+    background 180ms ease,
+    opacity 180ms ease;
+}
+
+.pressable:active {
+  transform: scale(0.985);
+}
