@@ -37,15 +37,15 @@ export function ProfileCard({
   return (
     <article
       className={cn(
-        "card-hover grid grid-cols-[auto_1fr_auto_auto] items-center gap-5 rounded-[24px] border bg-panel p-5",
-        selected ? "border-blue/45 shadow-card" : "border-line",
-        profile.isActive && "bg-blue/4",
+        "card-hover grid grid-cols-[auto_minmax(260px,1fr)_auto_auto] items-center gap-4 rounded-2xl border bg-panel px-4 py-3.5",
+        selected ? "border-blue/35 shadow-card ring-1 ring-blue/15" : "border-line",
+        profile.isActive && "bg-blue/5",
       )}
       onClick={onSelect}
     >
       <div
         className={cn(
-          "flex h-14 w-14 items-center justify-center rounded-2xl text-xl font-black text-white shadow-card",
+          "flex h-12 w-12 items-center justify-center rounded-xl text-lg font-black text-white shadow-[0_8px_20px_rgba(28,35,45,0.08)]",
           isApi ? "bg-teal" : "bg-blue",
         )}
       >
@@ -54,11 +54,15 @@ export function ProfileCard({
 
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <h3 className="truncate text-lg font-black text-ink">{profile.title}</h3>
+          <h3 className="min-w-0 truncate text-base font-black text-ink" title={profile.title}>
+            {profile.title}
+          </h3>
           {profile.isActive ? <CheckCircle2 className="shrink-0 text-green" size={18} /> : null}
         </div>
-        <div className="mt-1 truncate text-sm font-semibold text-sub">{profile.subtitle}</div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="mt-0.5 truncate text-sm font-semibold text-sub" title={profile.subtitle}>
+          {profile.subtitle}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {profile.isActive ? (
             <Chip tone="green" solid icon={<CheckCircle2 size={14} />}>
               当前
@@ -76,20 +80,24 @@ export function ProfileCard({
       </div>
 
       {isApi ? (
-        <div className="min-w-[250px] text-right">
-          <div className="text-sm font-black text-ink">{profile.provider?.model}</div>
-          <div className="mt-1 truncate text-xs font-semibold text-sub">{profile.provider?.baseUrl}</div>
-          <div className="mt-2 text-xs font-semibold text-sub/60">{shortPath(profile.diagnostics.profilePath)}</div>
+        <div className="w-[220px] text-right">
+          <div className="truncate text-sm font-black text-ink" title={profile.provider?.model}>
+            {profile.provider?.model}
+          </div>
+          <div className="mt-0.5 truncate text-xs font-semibold text-sub" title={profile.provider?.baseUrl}>
+            {profile.provider?.baseUrl}
+          </div>
+          <div className="mt-1 truncate text-[11px] font-semibold text-sub/55">{shortPath(profile.diagnostics.profilePath)}</div>
         </div>
       ) : (
         <UsageBadge usage={profile.usage} />
       )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
         {onEdit ? (
           <Button
             variant="ghost"
-            className="h-10 w-10 px-0"
+            className="h-9 w-9 px-0"
             onClick={(event) => {
               event.stopPropagation();
               onEdit();
@@ -102,7 +110,7 @@ export function ProfileCard({
         {onDelete && !profile.isActive ? (
           <Button
             variant="ghost"
-            className="h-10 w-10 px-0 text-red hover:bg-red/10"
+            className="h-9 w-9 px-0 text-red hover:bg-red/10"
             onClick={(event) => {
               event.stopPropagation();
               onDelete();
@@ -114,7 +122,7 @@ export function ProfileCard({
         ) : null}
         <Button
           variant={profile.isActive ? "soft" : "primary"}
-          className={cn("min-w-[108px]", profile.isActive && "text-teal bg-teal/10 hover:bg-teal/14")}
+          className={cn("min-w-[96px]", profile.isActive && "text-teal bg-teal/10 hover:bg-teal/15")}
           disabled={busy || !profile.isReady}
           onClick={(event) => {
             event.stopPropagation();
@@ -128,11 +136,11 @@ export function ProfileCard({
 
       {busy && progress ? (
         <div className="col-span-4 -mb-1 mt-1">
-          <div className="mb-2 flex items-center justify-between text-xs font-bold text-sub">
+          <div className="mb-1.5 flex items-center justify-between text-xs font-bold text-sub">
             <span>{progress.message}</span>
             <span>{Math.round(progress.percent ?? 0)}%</span>
           </div>
-          <div className="h-2 overflow-hidden rounded-full bg-blue/10">
+          <div className="h-1.5 overflow-hidden rounded-full bg-blue/10">
             <div className="h-full rounded-full bg-blue transition-all" style={{ width: `${progress.percent ?? 8}%` }} />
           </div>
         </div>

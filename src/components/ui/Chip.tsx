@@ -14,7 +14,7 @@ const tones = {
   teal: "bg-teal/10 text-teal",
   amber: "bg-amber/12 text-amber",
   red: "bg-red/10 text-red",
-  gray: "bg-black/6 text-sub",
+  gray: "bg-black/5 text-sub",
 };
 
 const solidTones = {
@@ -23,14 +23,14 @@ const solidTones = {
   teal: "bg-teal text-white",
   amber: "bg-amber text-white",
   red: "bg-red text-white",
-  gray: "bg-ink/80 text-white",
+  gray: "bg-ink/100 text-white",
 };
 
 export function Chip({ children, tone = "gray", solid, icon }: ChipProps) {
   return (
     <span
       className={cn(
-        "inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-xs font-bold leading-none",
+        "inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-black leading-none",
         solid ? solidTones[tone] : tones[tone],
       )}
     >
