@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  codex-as <profile> [codex args...]
+  codex-as --login <profile>
+  codex-as --status <profile>
+  codex-as --doctor <profile>
+  codex-as --list
+
+Examples:
+  codex-as work
+  codex-as personal -C /path/to/project
+  codex-as --login work
+  codex-as --status personal
+
+Profiles are stored under ~/.codex-profiles/<profile>.
+USAGE
+}
+
+profile_root="${CODEX_PROFILE_ROOT:-$HOME/.codex-profiles}"
+base_codex_home="${CODEX_BASE_HOME:-$HOME/.codex}"
+
+ensure_profile() {
+  local profile="$1"
+  local dir="$profile_root/$profile"
+
+  mkdir -p "$dir"
+
+  if [[ ! -f "$dir/config.toml" && -f "$base_codex_home/config.toml" ]]; then
+    cp "$base_codex_home/config.toml" "$dir/config.toml"
+  fi
+
+  printf '%s\n' "$dir"
+}
+
+require_profile_name() {
+  local value="${1:-}"
+  if [[ -z "$value" || "$value" == -* ]]; then
+    usage >&2
+    exit 2
+  fi
+}
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 0
+fi
+
+case "$1" in
+  --help|-h)
+    usage
+    exit 0
+    ;;
+  --list)
+    mkdir -p "$profile_root"
+    find "$profile_root" -mindepth 1 -maxdepth 1 -type d -print | sed "s#^$profile_root/##" | sort
+    exit 0
+    ;;
+  --login)
+    require_profile_name "${2:-}"
+    dir="$(ensure_profile "$2")"
+    CODEX_HOME="$dir" codex login
+    exit 0
+    ;;
+  --status)
+    require_profile_name "${2:-}"
+    dir="$(ensure_profile "$2")"
+    CODEX_HOME="$dir" codex login status
+    exit 0
+    ;;
+  --doctor)
+    require_profile_name "${2:-}"
+    dir="$(ensure_profile "$2")"
+    CODEX_HOME="$dir" codex doctor --summary
+    exit 0
+    ;;
+esac
+
+profile="$1"
+shift
+dir="$(ensure_profile "$profile")"
+
+exec env CODEX_HOME="$dir" codex "$@"

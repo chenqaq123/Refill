@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+codex_home="${CODEX_BASE_HOME:-$HOME/.codex}"
+profile_root="${CODEX_PROFILE_ROOT:-$HOME/.codex-profiles}"
+app_name="${CODEX_APP_NAME:-Codex}"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  codex-desktop-as --adopt-current <profile>
+  codex-desktop-as --hydrate <profile>
+  codex-desktop-as <profile>
+  codex-desktop-as --list
+
+Examples:
+  codex-desktop-as --adopt-current main
+  codex-desktop-as --hydrate work
+  codex-desktop-as work
+  codex-desktop-as personal
+
+What it does:
+  - Keeps each account's auth, config, sessions, logs, and local state in
+    ~/.codex-profiles/<profile>.
+  - Switches Desktop by quitting Codex, pointing ~/.codex at the selected
+    profile, then launching Codex again.
+
+The first command should usually be --adopt-current, which moves your existing
+~/.codex directory into a named profile and replaces ~/.codex with a symlink.
+USAGE
+}
+
+die() {
+  printf 'Error: %s\n' "$*" >&2
+  exit 1
+}
+
+require_profile_name() {
+  local value="${1:-}"
+  if [[ -z "$value" || "$value" == -* ]]; then
+    usage >&2
+    exit 2
+  fi
+}
+
+profile_dir() {
+  printf '%s/%s\n' "$profile_root" "$1"
+}
+
+quit_codex() {
+  osascript -e "tell application \"$app_name\" to quit" >/dev/null 2>&1 || true
+
+  local waited=0
+  while pgrep -x "$app_name" >/dev/null 2>&1; do
+    if (( waited >= 20 )); then
+      die "$app_name is still running. Quit it manually, then retry."
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
+launch_codex() {
+  open -a "$app_name"
+}
+
+ensure_profile_exists() {
+  local profile="$1"
+  local dir
+  dir="$(profile_dir "$profile")"
+  [[ -d "$dir" ]] || die "profile '$profile' does not exist at $dir. Log in with bin/codex-as --login $profile first, or adopt the current Desktop state."
+}
+
+copy_if_missing() {
+  local name="$1"
+  local source="$2"
+  local target="$3"
+
+  [[ -e "$source/$name" && ! -e "$target/$name" ]] || return 0
+  cp -R "$source/$name" "$target/$name"
+}
+
+hydrate_profile() {
+  local profile="$1"
+  local dir
+  dir="$(profile_dir "$profile")"
+
+  ensure_profile_exists "$profile"
+  mkdir -p "$dir"
+
+  local support_items=(
+    ".codex-global-state.json"
+    ".codex-global-state.json.bak"
+    ".personality_migration"
+    ".tmp"
+    "ambient-suggestions"
+    "cache"
+    "computer-use"
+    "installation_id"
+    "memories"
+    "models_cache.json"
+    "plugins"
+    "rules"
+    "skills"
+    "sqlite"
+    "tmp"
+    "vendor_imports"
+    "version.json"
+  )
+
+  local item
+  for item in "${support_items[@]}"; do
+    copy_if_missing "$item" "$codex_home" "$dir"
+  done
+
+  mkdir -p "$dir/sessions" "$dir/log" "$dir/shell_snapshots"
+}
+
+adopt_current() {
+  local profile="$1"
+  local dir
+  dir="$(profile_dir "$profile")"
+
+  [[ -e "$codex_home" ]] || die "$codex_home does not exist."
+  [[ ! -L "$codex_home" ]] || die "$codex_home is already a symlink. Use codex-desktop-as <profile> to switch."
+  [[ ! -e "$dir" ]] || die "profile '$profile' already exists at $dir."
+
+  mkdir -p "$profile_root"
+  quit_codex
+  mv "$codex_home" "$dir"
+  ln -s "$dir" "$codex_home"
+  launch_codex
+  printf 'Adopted current Codex Desktop state as profile: %s\n' "$profile"
+}
+
+switch_profile() {
+  local profile="$1"
+  local dir
+  dir="$(profile_dir "$profile")"
+
+  ensure_profile_exists "$profile"
+  quit_codex
+  hydrate_profile "$profile"
+
+  if [[ -L "$codex_home" ]]; then
+    rm "$codex_home"
+  elif [[ -e "$codex_home" ]]; then
+    die "$codex_home is a real directory. Run: bin/codex-desktop-as --adopt-current <profile-name>"
+  fi
+
+  ln -s "$dir" "$codex_home"
+  launch_codex
+  printf 'Switched Codex Desktop to profile: %s\n' "$profile"
+}
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 0
+fi
+
+case "$1" in
+  --help|-h)
+    usage
+    exit 0
+    ;;
+  --list)
+    mkdir -p "$profile_root"
+    find "$profile_root" -mindepth 1 -maxdepth 1 -type d -print | sed "s#^$profile_root/##" | sort
+    exit 0
+    ;;
+  --adopt-current)
+    require_profile_name "${2:-}"
+    adopt_current "$2"
+    exit 0
+    ;;
+  --hydrate)
+    require_profile_name "${2:-}"
+    hydrate_profile "$2"
+    printf 'Hydrated Desktop profile: %s\n' "$2"
+    exit 0
+    ;;
+esac
+
+require_profile_name "$1"
+switch_profile "$1"

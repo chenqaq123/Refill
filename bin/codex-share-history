@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+profile_root="${CODEX_PROFILE_ROOT:-$HOME/.codex-profiles}"
+shared_root="$profile_root/_shared-history"
+shared_sessions="$shared_root/sessions"
+shared_index="$shared_root/session_index.jsonl"
+backup_root="$shared_root/backups"
+
+mkdir -p "$shared_sessions" "$backup_root"
+touch "$shared_index"
+
+merge_sessions() {
+  local profile="$1"
+  local sessions="$profile/sessions"
+
+  [[ -e "$sessions" && ! -L "$sessions" ]] || return 0
+
+  if [[ -d "$sessions" ]]; then
+    find "$sessions" -type f -print0 | while IFS= read -r -d '' file; do
+      local rel="${file#$sessions/}"
+      local target="$shared_sessions/$rel"
+      mkdir -p "$(dirname "$target")"
+      [[ -e "$target" ]] || cp "$file" "$target"
+    done
+  fi
+
+  local name
+  name="$(basename "$profile")"
+  mv "$sessions" "$backup_root/$name-sessions-$(date +%s)"
+  ln -s "$shared_sessions" "$sessions"
+}
+
+merge_index() {
+  local profile="$1"
+  local index="$profile/session_index.jsonl"
+
+  [[ -e "$index" && ! -L "$index" ]] || return 0
+
+  local tmp
+  tmp="$(mktemp)"
+  cat "$shared_index" "$index" | awk '!seen[$0]++' > "$tmp"
+  mv "$tmp" "$shared_index"
+
+  local name
+  name="$(basename "$profile")"
+  mv "$index" "$backup_root/$name-session-index-$(date +%s)"
+  ln -s "$shared_index" "$index"
+}
+
+link_missing() {
+  local profile="$1"
+  [[ -d "$profile" ]] || return 0
+  [[ "$(basename "$profile")" != .* ]] || return 0
+  [[ "$(basename "$profile")" != "_shared-history" ]] || return 0
+
+  if [[ ! -e "$profile/sessions" ]]; then
+    ln -s "$shared_sessions" "$profile/sessions"
+  fi
+  if [[ ! -e "$profile/session_index.jsonl" ]]; then
+    ln -s "$shared_index" "$profile/session_index.jsonl"
+  fi
+}
+
+for profile in "$profile_root"/*; do
+  [[ -d "$profile" ]] || continue
+  [[ "$(basename "$profile")" != "_shared-history" ]] || continue
+  merge_sessions "$profile"
+  merge_index "$profile"
+  link_missing "$profile"
+done
+
+if [[ -d "$HOME/.codex" && ! -L "$HOME/.codex" ]]; then
+  merge_sessions "$HOME/.codex"
+  merge_index "$HOME/.codex"
+  link_missing "$HOME/.codex"
+fi
+
+printf 'Shared sessions: %s\n' "$shared_sessions"
+printf 'Shared index: %s\n' "$shared_index"

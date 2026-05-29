@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+
+profile_root = Path(os.environ.get("CODEX_PROFILE_ROOT", str(Path.home() / ".codex-profiles")))
+backup_root = profile_root / "_shared-history" / "backups"
+
+
+def latest_snapshot(root: Path):
+    latest = None
+    if not root.exists():
+        return None
+    for path in root.rglob("*.jsonl"):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except UnicodeDecodeError:
+            continue
+        for line in lines:
+            if '"rate_limits"' not in line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            payload = obj.get("payload") or {}
+            rate_limits = payload.get("rate_limits")
+            if not rate_limits:
+                continue
+            snapshot = {
+                "timestamp": obj.get("timestamp", ""),
+                "primary": rate_limits.get("primary"),
+                "secondary": rate_limits.get("secondary"),
+            }
+            if not latest or snapshot["timestamp"] > latest["timestamp"]:
+                latest = snapshot
+    return latest
+
+
+for profile in sorted(profile_root.iterdir() if profile_root.exists() else []):
+    if not profile.is_dir() or profile.name.startswith(".") or profile.name == "_shared-history":
+        continue
+    if not (profile / "auth.json").exists():
+        continue
+
+    cache_dir = profile / ".codex-switcher"
+    usage_file = cache_dir / "usage.json"
+    if usage_file.exists():
+        continue
+
+    candidates = list(backup_root.glob(f"{profile.name}-sessions-*"))
+    latest = None
+    for candidate in candidates:
+        snapshot = latest_snapshot(candidate)
+        if snapshot and (not latest or snapshot["timestamp"] > latest["timestamp"]):
+            latest = snapshot
+
+    if latest:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        usage_file.write_text(json.dumps(latest, separators=(",", ":")), encoding="utf-8")
+        print(f"seeded {profile.name}: {latest['timestamp']}")
+    else:
+        print(f"no usage snapshot for {profile.name}")
