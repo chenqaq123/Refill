@@ -3,6 +3,7 @@ import SwiftUI
 struct CodexSwitcherAppView: View {
     @StateObject private var model = AppModel()
     @State private var showingAPISheet = false
+    @State private var editingAPIProfile: Profile?
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -38,6 +39,7 @@ struct CodexSwitcherAppView: View {
                         now: model.now,
                         busyProfileID: model.busyProfileID,
                         onLaunch: model.switchTo(_:),
+                        onEdit: { editingAPIProfile = $0 },
                         onDelete: model.deleteProvider(_:)
                     )
 
@@ -56,6 +58,12 @@ struct CodexSwitcherAppView: View {
             APIProviderSheet { name, baseURL, modelName, apiKey in
                 showingAPISheet = false
                 model.createAPIProvider(name: name, baseURL: baseURL, model: modelName, apiKey: apiKey)
+            }
+        }
+        .sheet(item: $editingAPIProfile) { profile in
+            APIProviderSheet(profile: profile) { name, baseURL, modelName, apiKey in
+                editingAPIProfile = nil
+                model.updateAPIProvider(profile, name: name, baseURL: baseURL, model: modelName, apiKey: apiKey)
             }
         }
         .onReceive(ticker) { _ in
@@ -156,6 +164,7 @@ struct ProfileSection: View {
     let now: Date
     let busyProfileID: String?
     let onLaunch: (Profile) -> Void
+    var onEdit: ((Profile) -> Void)? = nil
     let onDelete: ((Profile) -> Void)?
 
     var body: some View {
@@ -169,6 +178,7 @@ struct ProfileSection: View {
                             unmanaged: false,
                             now: now,
                             isBusy: busyProfileID == profile.id,
+                            onEdit: onEdit.map { edit in { edit(profile) } },
                             onDelete: onDelete.map { delete in { delete(profile) } },
                             action: { onLaunch(profile) }
                         )
@@ -205,6 +215,7 @@ struct AccountRow: View {
     let unmanaged: Bool
     let now: Date
     let isBusy: Bool
+    var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
     let action: () -> Void
     @State private var isHovering = false
@@ -214,6 +225,7 @@ struct AccountRow: View {
         unmanaged: Bool,
         now: Date,
         isBusy: Bool,
+        onEdit: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
         action: @escaping () -> Void
     ) {
@@ -221,6 +233,7 @@ struct AccountRow: View {
         self.unmanaged = unmanaged
         self.now = now
         self.isBusy = isBusy
+        self.onEdit = onEdit
         self.onDelete = onDelete
         self.action = action
     }
@@ -273,6 +286,10 @@ struct AccountRow: View {
                 ProviderBadge(profile: profile)
             } else {
                 UsageBadge(usage: profile.usage, now: now)
+            }
+
+            if let onEdit, profile.kind == .apiProvider {
+                IconButton(systemImage: "pencil", tint: AppDesign.blue, action: onEdit)
             }
 
             if let onDelete, profile.kind == .apiProvider, !profile.isActive {
@@ -567,15 +584,30 @@ struct EmptyStateView: View {
 
 struct APIProviderSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var baseURL = ""
-    @State private var model = ""
+    @State private var name: String
+    @State private var baseURL: String
+    @State private var model: String
     @State private var apiKey = ""
+    let mode: Mode
     let onSave: (String, String, String, String) -> Void
+
+    enum Mode {
+        case create
+        case edit
+    }
+
+    init(profile: Profile? = nil, onSave: @escaping (String, String, String, String) -> Void) {
+        let provider = profile?.provider
+        _name = State(initialValue: provider?.name ?? "")
+        _baseURL = State(initialValue: provider?.baseURL ?? "")
+        _model = State(initialValue: provider?.model ?? "")
+        mode = provider == nil ? .create : .edit
+        self.onSave = onSave
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("添加 API")
+            Text(mode == .create ? "添加 API" : "编辑 API")
                 .font(.system(size: 20, weight: .bold))
 
             TextField("名称，例如 OpenRouter", text: $name)
@@ -584,7 +616,7 @@ struct APIProviderSheet: View {
                 .textFieldStyle(.roundedBorder)
             TextField("Model，例如 gpt-5.5-compatible", text: $model)
                 .textFieldStyle(.roundedBorder)
-            SecureField("API Key", text: $apiKey)
+            SecureField(mode == .create ? "API Key" : "API Key（留空则不修改）", text: $apiKey)
                 .textFieldStyle(.roundedBorder)
 
             HStack {
@@ -594,7 +626,7 @@ struct APIProviderSheet: View {
                 }
                 .keyboardShortcut(.cancelAction)
 
-                Button("保存") {
+                Button(mode == .create ? "保存" : "更新") {
                     onSave(name, baseURL, model, apiKey)
                 }
                 .keyboardShortcut(.defaultAction)
@@ -611,6 +643,6 @@ struct APIProviderSheet: View {
             && (url?.scheme == "http" || url?.scheme == "https")
             && url?.host != nil
             && !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (mode == .edit || !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 }

@@ -352,6 +352,18 @@ extension ProfileStore {
         }.value
     }
 
+    func updateProvider(_ profile: Profile, name: String, baseURL: String, model: String, apiKey: String?) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            try self.providerStore.updateProvider(
+                profile,
+                name: name,
+                baseURL: baseURL,
+                model: model,
+                apiKey: apiKey
+            )
+        }.value
+    }
+
     func openLoginTerminal(scriptPath: String) throws {
         let generatedProfile = "login-\(Int(Date().timeIntervalSince1970))"
         let escapedScript = scriptPath.replacingOccurrences(of: "'", with: "'\\''")

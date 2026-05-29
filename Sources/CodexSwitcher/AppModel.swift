@@ -124,6 +124,25 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func updateAPIProvider(_ profile: Profile, name: String, baseURL: String, model: String, apiKey: String?) {
+        guard profile.kind == .apiProvider, busyProfileID == nil else { return }
+        busyProfileID = profile.id
+        isWorking = true
+        notice = "正在更新 \(profile.displayTitle)"
+
+        Task {
+            do {
+                try await store.updateProvider(profile, name: name, baseURL: baseURL, model: model, apiKey: apiKey)
+                refresh()
+                notice = profile.isActive ? "已更新，下次重启 Codex 生效" : "已更新 \(name)"
+            } catch {
+                notice = error.localizedDescription
+            }
+            busyProfileID = nil
+            isWorking = false
+        }
+    }
+
     func login() {
         let scriptPath = Bundle.main.resourceURL?.appendingPathComponent("codex-as").path
             ?? "/Users/cgx/Documents/Switcher/bin/codex-as"

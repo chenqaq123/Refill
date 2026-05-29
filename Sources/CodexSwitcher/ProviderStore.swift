@@ -49,6 +49,25 @@ final class ProviderStore: @unchecked Sendable {
         try fileManager.removeItem(at: profile.url)
     }
 
+    func updateProvider(_ profile: Profile, name: String, baseURL: String, model: String, apiKey: String?) throws {
+        guard let current = profile.provider else { return }
+        let updated = APIProviderConfig(
+            id: current.id,
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            baseURL: normalizedBaseURL(baseURL),
+            model: model.trimmingCharacters(in: .whitespacesAndNewlines),
+            providerID: current.providerID,
+            createdAt: current.createdAt
+        )
+
+        if let apiKey, !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            try writeKey(apiKey, config: updated)
+        }
+        try writeProvider(updated, to: profile.url)
+        try writeCodexConfig(updated, to: profile.url, template: profile.url)
+        try createDesktopPlaceholders(in: profile.url)
+    }
+
     func keyExists(config: APIProviderConfig) -> Bool {
         (try? Shell.run("/usr/bin/security", ["find-generic-password", "-w", "-s", config.keychainService])) != nil
     }
