@@ -10,6 +10,7 @@ final class ProfileStore: @unchecked Sendable {
     var sharedHistoryRoot: URL { profileRoot.appendingPathComponent("_shared-history") }
     var sharedSessionsURL: URL { sharedHistoryRoot.appendingPathComponent("sessions") }
     var sharedSessionIndexURL: URL { sharedHistoryRoot.appendingPathComponent("session_index.jsonl") }
+    var sharedDesktopStateRoot: URL { sharedHistoryRoot.appendingPathComponent("desktop-state") }
     var sharedWorkspaceStateURL: URL { sharedHistoryRoot.appendingPathComponent("workspaces.json") }
 
     func switcherDir(for profileDir: URL) -> URL {

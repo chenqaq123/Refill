@@ -85,6 +85,122 @@ extension ProfileStore {
         try fileManager.moveItem(at: url, to: backup)
     }
 
+    func sqliteStateBaseNames(in directory: URL) -> Set<String> {
+        guard let urls = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isSymbolicLinkKey],
+            options: []
+        ) else {
+            return []
+        }
+
+        var names = Set<String>()
+        for url in urls {
+            var name = url.lastPathComponent
+            guard name.hasPrefix("state_") || name.hasPrefix("goals_") else { continue }
+            if name.hasSuffix("-wal") {
+                name.removeLast(4)
+            } else if name.hasSuffix("-shm") {
+                name.removeLast(4)
+            }
+            guard name.hasSuffix(".sqlite") else { continue }
+            names.insert(name)
+        }
+        return names
+    }
+
+    func checkpointSQLite(at url: URL) {
+        guard fileManager.fileExists(atPath: url.path), !isSymlink(url) else { return }
+        _ = try? Shell.run("/usr/bin/sqlite3", [url.path, "PRAGMA wal_checkpoint(TRUNCATE);"])
+    }
+
+    func sqlString(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "''"))'"
+    }
+
+    func mergeThreads(from source: URL, into destination: URL) -> Bool {
+        guard
+            fileManager.fileExists(atPath: source.path),
+            fileManager.fileExists(atPath: destination.path),
+            !isSymlink(source)
+        else {
+            return true
+        }
+
+        let sql = """
+        ATTACH DATABASE \(sqlString(source.path)) AS incoming;
+        INSERT OR REPLACE INTO main.threads SELECT * FROM incoming.threads;
+        DETACH DATABASE incoming;
+        PRAGMA wal_checkpoint(TRUNCATE);
+        """
+        do {
+            try Shell.run("/usr/bin/sqlite3", [destination.path, sql])
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func copySQLiteSetIfMissing(named baseName: String, from sourceDir: URL, to targetDir: URL) throws {
+        for suffix in ["", "-wal", "-shm"] {
+            let source = sourceDir.appendingPathComponent(baseName + suffix)
+            let target = targetDir.appendingPathComponent(baseName + suffix)
+            guard fileManager.fileExists(atPath: source.path), !fileManager.fileExists(atPath: target.path) else {
+                continue
+            }
+            try fileManager.copyItem(at: source, to: target)
+        }
+    }
+
+    func backupAndRemoveSQLiteSet(named baseName: String, in directory: URL) throws {
+        for suffix in ["-shm", "-wal", ""] {
+            let url = directory.appendingPathComponent(baseName + suffix)
+            try backupAndRemove(url, label: directory.lastPathComponent + "-" + baseName + suffix)
+        }
+    }
+
+    func linkSQLiteSet(named baseName: String, in profileDir: URL) throws {
+        for suffix in ["", "-wal", "-shm"] {
+            let local = profileDir.appendingPathComponent(baseName + suffix)
+            let shared = sharedDesktopStateRoot.appendingPathComponent(baseName + suffix)
+            if isSymlink(local) {
+                continue
+            }
+            if fileManager.fileExists(atPath: local.path) {
+                try backupAndRemove(local, label: profileDir.lastPathComponent + "-" + baseName + suffix)
+            }
+            try fileManager.createSymbolicLink(at: local, withDestinationURL: shared)
+        }
+    }
+
+    func ensureSharedDesktopState(for profileDir: URL) throws {
+        try fileManager.createDirectory(at: sharedDesktopStateRoot, withIntermediateDirectories: true)
+
+        var baseNames = sqliteStateBaseNames(in: profileDir)
+        baseNames.formUnion(sqliteStateBaseNames(in: sharedDesktopStateRoot))
+
+        for baseName in baseNames.sorted() {
+            let localBase = profileDir.appendingPathComponent(baseName)
+            let sharedBase = sharedDesktopStateRoot.appendingPathComponent(baseName)
+
+            checkpointSQLite(at: localBase)
+            checkpointSQLite(at: sharedBase)
+
+            if !fileManager.fileExists(atPath: sharedBase.path) {
+                try copySQLiteSetIfMissing(named: baseName, from: profileDir, to: sharedDesktopStateRoot)
+            } else if baseName.hasPrefix("state_") {
+                let didMerge = mergeThreads(from: localBase, into: sharedBase)
+                guard didMerge else { continue }
+            }
+
+            guard fileManager.fileExists(atPath: sharedBase.path) else { continue }
+            if !isSymlink(localBase) {
+                try backupAndRemoveSQLiteSet(named: baseName, in: profileDir)
+            }
+            try linkSQLiteSet(named: baseName, in: profileDir)
+        }
+    }
+
     func ensureSharedHistory(for profileDir: URL) throws {
         try fileManager.createDirectory(at: sharedSessionsURL, withIntermediateDirectories: true)
 
@@ -258,6 +374,7 @@ extension ProfileStore {
         }
 
         try ensureSharedHistory(for: target)
+        try ensureSharedDesktopState(for: target)
         try applySharedWorkspaceState(to: target)
     }
 
@@ -278,8 +395,12 @@ extension ProfileStore {
         cacheUsageForActiveProfile()
         try quitCodex()
         syncWorkspaceStateForActiveProfile()
+        if let activeID = activeProfileID() {
+            try ensureSharedDesktopState(for: profileURL(activeID))
+        }
         try hydrateDesktopProfile(profile)
         try ensureSharedHistory(for: target)
+        try ensureSharedDesktopState(for: target)
         try applySharedWorkspaceState(to: target)
 
         if isCodexHomeSymlink() {
@@ -320,6 +441,7 @@ extension ProfileStore {
         try fileManager.createDirectory(at: profileRoot, withIntermediateDirectories: true)
         try fileManager.moveItem(at: codexHome, to: target)
         try ensureSharedHistory(for: target)
+        try ensureSharedDesktopState(for: target)
         try syncWorkspaceState(from: target)
         try applySharedWorkspaceState(to: target)
         try writeActivationDate(for: target)
@@ -331,6 +453,9 @@ extension ProfileStore {
     func createProvider(name: String, baseURL: String, model: String, apiKey: String) async throws -> String {
         try await Task.detached(priority: .userInitiated) {
             try self.fileManager.createDirectory(at: self.profileRoot, withIntermediateDirectories: true)
+            if let activeID = self.activeProfileID() {
+                try self.ensureSharedDesktopState(for: self.profileURL(activeID))
+            }
             let template = self.activeProfileID().map { self.profileURL($0) }
             let id = try self.providerStore.createProvider(
                 root: self.profileRoot,
