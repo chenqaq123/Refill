@@ -20,8 +20,10 @@ The app can:
 
 - list profiles in `~/.codex-profiles`
 - show each account as a card with email, plan, readiness, and current-account status
+- show effective remaining usage; expired 5h/7d windows are locally treated as recovered until the next real Codex snapshot arrives
 - save the current `~/.codex` automatically using account info, without asking for a profile name
-- switch profiles with one click by quitting Codex, hydrating missing Desktop support files, relinking `~/.codex`, and reopening Codex
+- switch profiles with one click by quitting Codex, hydrating missing Desktop support files, relinking `~/.codex`, and reopening Codex in a background task
+- add Responses-compatible third-party API profiles whose API keys are stored in macOS Keychain
 - open Terminal for first-time login to a new profile; generated login profiles are renamed from account info after refresh
 
 ## Setup
@@ -101,6 +103,37 @@ Then switch Desktop accounts:
 The script quits Codex, waits for it to exit, points `~/.codex` at the selected profile, then launches Codex again.
 
 If a profile was created by CLI login only, switching now hydrates it first. Hydration copies Desktop support files such as `computer-use`, plugins, caches, and UI state when they are missing, but it does not overwrite that profile's `auth.json`, `config.toml`, sessions, or logs.
+
+## Usage Display
+
+Codex only emits quota details while an account is actively used, so inactive accounts use their last cached `rate_limits` snapshot. The app now applies the reset timestamp locally:
+
+- if a 5h or 7d window has not reset yet, the card shows the remaining percentage from the cached snapshot
+- if the reset timestamp is in the past, the card shows that window as `100%` with `预计已恢复`
+- the footer still shows when the last real Codex snapshot was captured, so estimated recovery is not confused with a fresh server sync
+
+The next time the account is launched and Codex emits new `rate_limits`, that real snapshot replaces the estimate.
+
+## Third-Party API Profiles
+
+Click `API` in the app to add a Responses-compatible provider. Each provider gets a profile under `~/.codex-profiles` with a generated `config.toml` like:
+
+```toml
+model_provider = "switcher-provider-name"
+model = "your-model"
+
+[model_providers.switcher-provider-name]
+name = "Provider Name"
+base_url = "https://provider.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = false
+
+[model_providers.switcher-provider-name.auth]
+command = "/usr/bin/security"
+args = ["find-generic-password", "-w", "-s", "local.codex.account-switcher.switcher-provider-name"]
+```
+
+The API key is not written to `config.toml`; it is stored in macOS Keychain and read by Codex through the `security` command when the provider is active.
 
 If a profile does not exist yet, create/login with:
 
