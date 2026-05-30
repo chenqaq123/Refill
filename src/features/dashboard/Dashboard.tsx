@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BarChart3, CheckCircle2, KeyRound, Loader2, Plus, RefreshCw, Sparkles, UserRoundPlus, UsersRound, XCircle } from "lucide-react";
+import { BarChart3, CheckCircle2, KeyRound, Loader2, Plus, RefreshCw, Search, Sparkles, UserRoundPlus, UsersRound, XCircle } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Chip } from "../../components/ui/Chip";
 import { api } from "../../lib/tauri";
@@ -28,9 +28,18 @@ export function Dashboard() {
     toastTimer.current = window.setTimeout(() => setToast(null), kind === "ok" ? 2600 : 5000);
   }
 
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+
   const profiles = dashboard?.profiles ?? [];
-  const officialProfiles = profiles.filter((profile) => profile.kind === "official");
-  const apiProfiles = profiles.filter((profile) => profile.kind === "api");
+  const matches = (profile: Profile) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return `${profile.title} ${profile.subtitle} ${profile.primaryPill}`.toLowerCase().includes(q);
+  };
+  const officialProfiles = profiles.filter((profile) => profile.kind === "official" && matches(profile));
+  const apiProfiles = profiles.filter((profile) => profile.kind === "api" && matches(profile));
+  const hasAnyProfile = profiles.length > 0 || Boolean(dashboard?.unmanagedCurrent);
   const selectedProfile = profiles.find((profile) => profile.id === selectedId) ?? profiles.find((profile) => profile.isActive) ?? null;
 
   const lastSynced = useMemo(() => {
@@ -61,6 +70,28 @@ export function Dashboard() {
     return () => {
       unlisten?.();
     };
+  }, []);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "r") {
+        event.preventDefault();
+        refresh().catch((error) => setNotice(String(error)));
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        setEditingProvider(null);
+        setProviderDialogOpen(true);
+      } else if (event.key === "/" && !typing) {
+        event.preventDefault();
+        searchRef.current?.focus();
+      } else if (event.key === "Escape" && typing && event.target === searchRef.current) {
+        setQuery("");
+        searchRef.current?.blur();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   async function launch(profile: Profile) {
@@ -189,6 +220,50 @@ export function Dashboard() {
             </div>
           </section>
 
+          {hasAnyProfile ? (
+            <div className="relative">
+              <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-sub/55" />
+              <input
+                ref={searchRef}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="搜索账号 / provider…"
+                className="h-10 w-full rounded-2xl border border-line bg-panel/70 pl-10 pr-16 text-sm font-semibold text-ink outline-none placeholder:text-sub/55 focus:border-blue/55 focus:ring-4 focus:ring-blue/10"
+              />
+              <kbd className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 rounded-md bg-black/5 px-1.5 py-0.5 text-[11px] font-bold text-sub/55">
+                /
+              </kbd>
+            </div>
+          ) : null}
+
+          {!hasAnyProfile ? (
+            <section className="glass-panel rounded-3xl px-6 py-8 text-center">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-blue/10 text-blue">
+                <Sparkles size={24} />
+              </div>
+              <h2 className="mt-4 text-lg font-black">欢迎使用 Refill</h2>
+              <p className="mx-auto mt-1 max-w-[440px] text-sm font-semibold text-sub">
+                在多个 Codex 账号与第三方 API 之间切换，并保留同一条对话历史。先连接一个账号开始：
+              </p>
+              <div className="mt-4 flex justify-center gap-2">
+                <Button variant="primary" icon={<UserRoundPlus size={17} />} onClick={() => api.openLoginTerminal().catch((error) => setNotice(String(error)))}>
+                  登录官方账号
+                </Button>
+                <Button
+                  variant="soft"
+                  className="bg-teal/10 text-teal hover:bg-teal/15"
+                  icon={<KeyRound size={17} />}
+                  onClick={() => {
+                    setEditingProvider(null);
+                    setProviderDialogOpen(true);
+                  }}
+                >
+                  添加 API Provider
+                </Button>
+              </div>
+            </section>
+          ) : null}
+
           {dashboard?.unmanagedCurrent ? (
             <section className="space-y-2.5">
               <SectionHeading title="待保存" count={1} />
@@ -202,6 +277,7 @@ export function Dashboard() {
             </section>
           ) : null}
 
+          {hasAnyProfile ? (
           <section className="space-y-2.5">
             <SectionHeading title="官方账号" count={officialProfiles.length} />
             <div className="space-y-2.5">
@@ -218,7 +294,9 @@ export function Dashboard() {
               ))}
             </div>
           </section>
+          ) : null}
 
+          {hasAnyProfile ? (
           <section className="space-y-2.5">
             <SectionHeading title="API Providers" count={apiProfiles.length} />
             <div className="space-y-2.5">
@@ -249,6 +327,7 @@ export function Dashboard() {
               ) : null}
             </div>
           </section>
+          ) : null}
         </div>
       </main>
 
