@@ -79,12 +79,8 @@ export function App() {
         onSelectApp={setAppId}
         page={page}
         onNavigate={setPage}
-        footer={
-          <div className="rounded-xl bg-muted/60 px-2.5 py-2 text-[11px] font-bold text-sub/70">
-            <div className="truncate">同步 {lastSynced}</div>
-            <div className="mt-0.5 truncate text-sub/55">{store.notice}</div>
-          </div>
-        }
+        syncLabel={lastSynced}
+        notice={store.notice}
       />
 
       <main className="flex-1 overflow-y-auto px-7 py-6">
