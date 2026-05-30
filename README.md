@@ -63,7 +63,7 @@ or provider is active.
   Gemini CLI… are scaffolded).
 
 ### Requirements
-- **Apple Silicon Mac** — the current release is arm64‑only (no Intel build yet).
+- **macOS** — the release `.dmg` is a universal build (Apple Silicon **and** Intel).
 - **Codex Desktop installed** — Refill switches accounts *for* Codex, so install
   the Codex app first.
 
