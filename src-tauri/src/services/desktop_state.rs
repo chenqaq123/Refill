@@ -163,6 +163,94 @@ pub fn align_thread_provider(store: &ProfileStore, profile_dir: &Path) -> Result
     Ok(())
 }
 
+pub fn align_rollout_provider(store: &ProfileStore, profile_dir: &Path) -> Result<(), String> {
+    let provider_id = store
+        .provider_store()
+        .read_provider(profile_dir)
+        .map(|provider| provider.provider_id)
+        .unwrap_or_else(|| "openai".to_string());
+
+    let sessions = store.shared_sessions();
+    if !sessions.exists() {
+        return Ok(());
+    }
+
+    // Codex Desktop repairs thread metadata by re-scanning the rollout JSONL
+    // files, upserting `model_provider` from each session's meta line. Rewriting
+    // only the SQLite `threads` table is therefore not enough: the next time the
+    // app lists threads it clobbers our value with the one recorded on disk.
+    // Realign the recorded provider so the active account's history survives the
+    // scan-and-repair pass and matches the provider filter.
+    let rollouts: Vec<std::path::PathBuf> = walkdir::WalkDir::new(&sessions)
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry.file_type().is_file())
+        .map(|entry| entry.into_path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    for path in rollouts {
+        rewrite_session_meta_provider(&path, &provider_id)?;
+    }
+    Ok(())
+}
+
+fn rewrite_session_meta_provider(path: &Path, provider_id: &str) -> Result<(), String> {
+    use std::io::{BufRead, BufReader, Write};
+
+    let file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut reader = BufReader::new(file);
+    let mut first_line = String::new();
+    if reader
+        .read_line(&mut first_line)
+        .map_err(|error| error.to_string())?
+        == 0
+    {
+        return Ok(());
+    }
+
+    let updated = replace_model_provider(&first_line, provider_id);
+    if updated == first_line {
+        return Ok(());
+    }
+
+    let tmp = path.with_extension("jsonl.tmp");
+    {
+        let mut out = fs::File::create(&tmp).map_err(|error| error.to_string())?;
+        out.write_all(updated.as_bytes())
+            .map_err(|error| error.to_string())?;
+        std::io::copy(&mut reader, &mut out).map_err(|error| error.to_string())?;
+        out.flush().map_err(|error| error.to_string())?;
+    }
+    fs::rename(&tmp, path).map_err(|error| error.to_string())
+}
+
+fn replace_model_provider(line: &str, provider_id: &str) -> String {
+    const KEY: &str = "\"model_provider\":\"";
+    let Some(start) = line.find(KEY) else {
+        return line.to_string();
+    };
+    let value_start = start + KEY.len();
+    let Some(relative_end) = line[value_start..].find('"') else {
+        return line.to_string();
+    };
+    let value_end = value_start + relative_end;
+    let escaped = provider_id.replace('\\', "\\\\").replace('"', "\\\"");
+    if line[value_start..value_end] == escaped {
+        return line.to_string();
+    }
+    let mut result = String::with_capacity(line.len() + escaped.len());
+    result.push_str(&line[..value_start]);
+    result.push_str(&escaped);
+    result.push_str(&line[value_end..]);
+    result
+}
+
 pub fn repair_visible_threads(store: &ProfileStore) -> Result<(), String> {
     for base_name in sqlite_state_base_names(&store.shared_desktop_state()) {
         if !base_name.starts_with("state_") {
@@ -516,4 +604,55 @@ fn profile_name(path: &Path) -> String {
         .and_then(|value| value.to_str())
         .unwrap_or("profile")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replace_model_provider;
+
+    #[test]
+    fn rewrites_session_meta_provider() {
+        let line = r#"{"type":"session_meta","payload":{"id":"x","source":"vscode","model_provider":"openai","cwd":"/tmp"}}"#;
+        let updated = replace_model_provider(line, "switcher-openrouter");
+        assert!(updated.contains(r#""model_provider":"switcher-openrouter""#));
+        assert!(updated.contains(r#""source":"vscode""#));
+        assert!(updated.contains(r#""cwd":"/tmp""#));
+    }
+
+    #[test]
+    fn leaves_line_untouched_when_already_aligned() {
+        let line = r#"{"model_provider":"openai"}"#;
+        assert_eq!(replace_model_provider(line, "openai"), line);
+    }
+
+    #[test]
+    fn leaves_line_without_provider_untouched() {
+        let line = r#"{"type":"event_msg","payload":{}}"#;
+        assert_eq!(replace_model_provider(line, "switcher-openrouter"), line);
+    }
+
+    #[test]
+    fn rewrites_only_first_line_and_preserves_remainder() {
+        use super::rewrite_session_meta_provider;
+        use std::io::Write;
+
+        let dir = std::env::temp_dir().join(format!("rollout-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rollout-test.jsonl");
+        let body = "{\"type\":\"session_meta\",\"payload\":{\"model_provider\":\"openai\",\"cwd\":\"/x\"}}\n{\"type\":\"event_msg\",\"model_provider\":\"keep-me\"}\n{\"line\":3}\n";
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(body.as_bytes())
+            .unwrap();
+
+        rewrite_session_meta_provider(&path, "switcher-openrouter").unwrap();
+
+        let result = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = result.lines().collect();
+        assert!(lines[0].contains(r#""model_provider":"switcher-openrouter""#));
+        // The other lines (including a stray model_provider in line 2) stay intact.
+        assert_eq!(lines[1], r#"{"type":"event_msg","model_provider":"keep-me"}"#);
+        assert_eq!(lines[2], r#"{"line":3}"#);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

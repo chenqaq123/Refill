@@ -68,6 +68,7 @@ pub fn switch_profile(
     }
     symlink(&target, store.codex_home()).map_err(|error| error.to_string())?;
     store.write_activation_date(&target)?;
+    desktop_state::align_rollout_provider(store, &target)?;
     desktop_state::align_thread_provider(store, &target)?;
     desktop_state::repair_visible_threads(store)?;
 
@@ -104,6 +105,7 @@ pub fn save_current_profile(store: &ProfileStore) -> Result<String, String> {
     symlink(&target, &codex_home).map_err(|error| error.to_string())?;
     desktop_state::reconcile_all_profiles(store);
     store.reconcile_usage_caches();
+    desktop_state::align_rollout_provider(store, &target)?;
     desktop_state::align_thread_provider(store, &target)?;
     desktop_state::repair_visible_threads(store)?;
     launch_codex()?;
