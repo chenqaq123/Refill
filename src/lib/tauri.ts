@@ -11,6 +11,7 @@ import type {
   ProviderValidation,
   SwitchProgress,
   SwitchResult,
+  UsageSummary,
 } from "./types";
 
 export const api = {
@@ -25,6 +26,8 @@ export const api = {
   validateProvider: (profileId: string) => invoke<ProviderValidation>("validate_provider", { profileId }),
   testProviderConnection: (input: ProviderTestInput) =>
     invoke<ProviderTestResult>("test_provider_connection", { input }),
+  usageSummary: () => invoke<UsageSummary>("usage_summary"),
+  readProxyLog: () => invoke<string[]>("read_proxy_log"),
   openLoginTerminal: () => invoke<void>("open_login_terminal"),
   getSettings: () => invoke<AppSettings>("get_settings"),
   updateSettings: (settings: AppSettings) => invoke<AppSettings>("update_settings", { settings }),

@@ -122,6 +122,29 @@ export type ProviderTestResult = {
   suggestChat: boolean;
 };
 
+export type ModelUsage = {
+  model: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+};
+
+export type ProviderUsage = {
+  providerId: string;
+  name: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  models: ModelUsage[];
+};
+
+export type UsageSummary = {
+  totalRequests: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  providers: ProviderUsage[];
+};
+
 export type AppSettings = {
   refreshIntervalSeconds: number;
   shareHistory: boolean;

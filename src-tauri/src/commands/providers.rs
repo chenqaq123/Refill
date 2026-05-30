@@ -5,9 +5,25 @@ use tauri::State;
 
 use crate::models::{
     Profile, ProviderInput, ProviderTestInput, ProviderTestResult, ProviderUpdateInput,
-    ProviderValidation,
+    ProviderValidation, UsageSummary,
 };
 use crate::services::{app_state::AppState, desktop_state};
+
+#[tauri::command]
+pub async fn usage_summary(state: State<'_, AppState>) -> Result<UsageSummary, String> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.usage_summary())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn read_proxy_log(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.read_proxy_log(200))
+        .await
+        .map_err(|error| error.to_string())
+}
 
 #[tauri::command]
 pub async fn create_provider(

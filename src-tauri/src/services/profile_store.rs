@@ -81,6 +81,90 @@ impl ProfileStore {
         }
     }
 
+    /// Aggregate recorded usage by provider and model for the cost dashboard.
+    pub fn usage_summary(&self) -> crate::models::UsageSummary {
+        use crate::models::{ModelUsage, ProviderUsage, UsageSummary};
+        use std::collections::BTreeMap;
+
+        // provider_id -> (model -> [requests, input, output])
+        let mut by_provider: BTreeMap<String, BTreeMap<String, (u64, u64, u64)>> = BTreeMap::new();
+
+        let root = self.shared_history_root();
+        for name in ["usage.jsonl.1", "usage.jsonl"] {
+            let Ok(content) = fs::read_to_string(root.join(name)) else {
+                continue;
+            };
+            for line in content.lines() {
+                let Ok(record) = serde_json::from_str::<Value>(line) else {
+                    continue;
+                };
+                let provider = record.get("provider").and_then(Value::as_str).unwrap_or("").to_string();
+                let model = record.get("model").and_then(Value::as_str).unwrap_or("").to_string();
+                let input = record.get("input").and_then(Value::as_u64).unwrap_or(0);
+                let output = record.get("output").and_then(Value::as_u64).unwrap_or(0);
+                let entry = by_provider.entry(provider).or_default().entry(model).or_insert((0, 0, 0));
+                entry.0 += 1;
+                entry.1 += input;
+                entry.2 += output;
+            }
+        }
+
+        // Resolve provider display names.
+        let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for (_, dir) in self.profile_directories() {
+            if let Some(provider) = self.provider_store.read_provider(&dir) {
+                names.insert(provider.provider_id, provider.name);
+            }
+        }
+
+        let mut total_requests = 0u64;
+        let mut total_input = 0u64;
+        let mut total_output = 0u64;
+        let mut providers = Vec::new();
+        for (provider_id, models_map) in by_provider {
+            let mut models = Vec::new();
+            let (mut p_req, mut p_in, mut p_out) = (0u64, 0u64, 0u64);
+            for (model, (req, input, output)) in models_map {
+                p_req += req;
+                p_in += input;
+                p_out += output;
+                models.push(ModelUsage { model, requests: req, input_tokens: input, output_tokens: output });
+            }
+            models.sort_by(|a, b| b.input_tokens.cmp(&a.input_tokens));
+            total_requests += p_req;
+            total_input += p_in;
+            total_output += p_out;
+            let name = names.get(&provider_id).cloned().unwrap_or_else(|| provider_id.clone());
+            providers.push(ProviderUsage {
+                provider_id,
+                name,
+                requests: p_req,
+                input_tokens: p_in,
+                output_tokens: p_out,
+                models,
+            });
+        }
+        providers.sort_by(|a, b| b.input_tokens.cmp(&a.input_tokens));
+
+        UsageSummary {
+            total_requests,
+            total_input_tokens: total_input,
+            total_output_tokens: total_output,
+            providers,
+        }
+    }
+
+    /// Return the most recent proxy-log lines (newest last), capped to `limit`.
+    pub fn read_proxy_log(&self, limit: usize) -> Vec<String> {
+        let path = self.shared_history_root().join("proxy.log");
+        let Ok(content) = fs::read_to_string(path) else {
+            return Vec::new();
+        };
+        let lines: Vec<&str> = content.lines().collect();
+        let start = lines.len().saturating_sub(limit);
+        lines[start..].iter().map(|line| line.to_string()).collect()
+    }
+
     /// Append one structured usage record (one JSON object per line) for the
     /// cost/usage dashboard. Size-capped like the request log.
     pub fn record_usage(&self, provider_id: &str, model: &str, input_tokens: u64, output_tokens: u64) {

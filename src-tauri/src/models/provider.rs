@@ -87,6 +87,35 @@ pub struct ProviderTestInput {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ModelUsage {
+    pub model: String,
+    pub requests: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderUsage {
+    pub provider_id: String,
+    pub name: String,
+    pub requests: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub models: Vec<ModelUsage>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSummary {
+    pub total_requests: u64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub providers: Vec<ProviderUsage>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderTestResult {
     pub ok: bool,
     pub status: u16,

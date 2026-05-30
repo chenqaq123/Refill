@@ -23,6 +23,8 @@ pub fn run() {
             commands::providers::delete_provider,
             commands::providers::validate_provider,
             commands::providers::test_provider_connection,
+            commands::providers::usage_summary,
+            commands::providers::read_proxy_log,
             commands::settings::get_settings,
             commands::settings::update_settings,
             commands::switch::switch_profile,

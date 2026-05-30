@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, KeyRound, Loader2, Plus, RefreshCw, Sparkles, UserRoundPlus, UsersRound, XCircle } from "lucide-react";
+import { BarChart3, CheckCircle2, KeyRound, Loader2, Plus, RefreshCw, Sparkles, UserRoundPlus, UsersRound, XCircle } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Chip } from "../../components/ui/Chip";
 import { api } from "../../lib/tauri";
@@ -7,6 +7,7 @@ import type { DashboardState, Profile, ProviderInput, ProviderUpdateInput, Switc
 import { relativeTime } from "../../lib/format";
 import { ProfileCard } from "../profiles/ProfileCard";
 import { ProviderDialog } from "../providers/ProviderDialog";
+import { UsageDialog } from "../usage/UsageDialog";
 import { DetailPanel } from "../settings/DetailPanel";
 
 export function Dashboard() {
@@ -17,6 +18,7 @@ export function Dashboard() {
   const [notice, setNotice] = useState("正在加载");
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Profile | null>(null);
+  const [usageOpen, setUsageOpen] = useState(false);
   const [toast, setToast] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
@@ -163,6 +165,9 @@ export function Dashboard() {
                 >
                   API
                 </Button>
+                <Button variant="soft" icon={<BarChart3 size={17} />} onClick={() => setUsageOpen(true)}>
+                  用量
+                </Button>
                 <Button variant="soft" icon={<RefreshCw size={17} />} onClick={() => refresh().catch((error) => setNotice(String(error)))}>
                   同步
                 </Button>
@@ -272,6 +277,8 @@ export function Dashboard() {
           </div>
         </div>
       ) : null}
+
+      <UsageDialog open={usageOpen} onClose={() => setUsageOpen(false)} />
 
       <ProviderDialog
         open={providerDialogOpen}
