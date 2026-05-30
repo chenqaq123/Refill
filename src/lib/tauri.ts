@@ -5,6 +5,8 @@ import type {
   DashboardState,
   Profile,
   ProviderInput,
+  ProviderTestInput,
+  ProviderTestResult,
   ProviderUpdateInput,
   ProviderValidation,
   SwitchProgress,
@@ -21,6 +23,8 @@ export const api = {
     invoke<Profile>("update_provider", { profileId, input }),
   deleteProvider: (profileId: string) => invoke<void>("delete_provider", { profileId }),
   validateProvider: (profileId: string) => invoke<ProviderValidation>("validate_provider", { profileId }),
+  testProviderConnection: (input: ProviderTestInput) =>
+    invoke<ProviderTestResult>("test_provider_connection", { input }),
   openLoginTerminal: () => invoke<void>("open_login_terminal"),
   getSettings: () => invoke<AppSettings>("get_settings"),
   updateSettings: (settings: AppSettings) => invoke<AppSettings>("update_settings", { settings }),

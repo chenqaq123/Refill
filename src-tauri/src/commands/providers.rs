@@ -1,6 +1,12 @@
+use std::time::Instant;
+
+use serde_json::json;
 use tauri::State;
 
-use crate::models::{Profile, ProviderInput, ProviderUpdateInput, ProviderValidation};
+use crate::models::{
+    Profile, ProviderInput, ProviderTestInput, ProviderTestResult, ProviderUpdateInput,
+    ProviderValidation,
+};
 use crate::services::{app_state::AppState, desktop_state};
 
 #[tauri::command]
@@ -59,6 +65,107 @@ pub async fn delete_provider(state: State<'_, AppState>, profile_id: String) -> 
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn test_provider_connection(
+    state: State<'_, AppState>,
+    input: ProviderTestInput,
+) -> Result<ProviderTestResult, String> {
+    let store = state.store.clone();
+
+    // Resolve the key: prefer the freshly typed one, otherwise fall back to the
+    // key stored in Keychain for the provider being edited.
+    let key = match input.api_key.as_deref().map(str::trim) {
+        Some(key) if !key.is_empty() => key.to_string(),
+        _ => {
+            let from_keychain = input.profile_id.as_ref().and_then(|id| {
+                let dir = store.profile_url(id);
+                store
+                    .provider_store()
+                    .read_provider(&dir)
+                    .and_then(|provider| store.provider_store().read_key(&provider))
+            });
+            match from_keychain {
+                Some(key) => key,
+                None => return Err("请填写 API Key 后再测试。".to_string()),
+            }
+        }
+    };
+
+    let base = input.base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err("请填写 Base URL。".to_string());
+    }
+    let model = input.model.trim();
+    let is_chat = input.wire_api == "chat";
+    let (endpoint, body) = if is_chat {
+        (
+            format!("{base}/chat/completions"),
+            json!({
+                "model": model,
+                "messages": [{ "role": "user", "content": "ping" }],
+                "max_tokens": 1,
+                "stream": false,
+            }),
+        )
+    } else {
+        (
+            format!("{base}/responses"),
+            json!({ "model": model, "input": "ping", "max_output_tokens": 16, "stream": false }),
+        )
+    };
+
+    let client = reqwest::Client::new();
+    let started = Instant::now();
+    let response = client
+        .post(&endpoint)
+        .bearer_auth(&key)
+        .json(&body)
+        .send()
+        .await;
+    let latency_ms = started.elapsed().as_millis() as u64;
+
+    match response {
+        Ok(response) => {
+            let status = response.status();
+            let code = status.as_u16();
+            let body_text = response.text().await.unwrap_or_default();
+            let ok = status.is_success();
+            let suggest_chat = !is_chat && code == 404;
+            let message = if ok {
+                format!("连接成功 · {endpoint} · {latency_ms}ms")
+            } else if suggest_chat {
+                "该服务没有 /responses 接口，应使用 Chat Completions（本地代理）。".to_string()
+            } else {
+                format!("{code} {} · {}", status.canonical_reason().unwrap_or(""), brief(&body_text))
+            };
+            Ok(ProviderTestResult {
+                ok,
+                status: code,
+                latency_ms,
+                message,
+                suggest_chat,
+            })
+        }
+        Err(error) => Ok(ProviderTestResult {
+            ok: false,
+            status: 0,
+            latency_ms,
+            message: format!("无法连接 {endpoint}：{error}"),
+            suggest_chat: false,
+        }),
+    }
+}
+
+fn brief(text: &str) -> String {
+    let trimmed = text.trim();
+    let truncated: String = trimmed.chars().take(200).collect();
+    if truncated.len() < trimmed.len() {
+        format!("{truncated}…")
+    } else {
+        truncated
+    }
 }
 
 #[tauri::command]

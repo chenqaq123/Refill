@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { KeyRound, Loader2, Plus, RefreshCw, Sparkles, UserRoundPlus, UsersRound } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CheckCircle2, KeyRound, Loader2, Plus, RefreshCw, Sparkles, UserRoundPlus, UsersRound, XCircle } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Chip } from "../../components/ui/Chip";
 import { api } from "../../lib/tauri";
@@ -17,6 +17,14 @@ export function Dashboard() {
   const [notice, setNotice] = useState("正在加载");
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Profile | null>(null);
+  const [toast, setToast] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const toastTimer = useRef<number | undefined>(undefined);
+
+  function showToast(kind: "ok" | "error", text: string) {
+    window.clearTimeout(toastTimer.current);
+    setToast({ kind, text });
+    toastTimer.current = window.setTimeout(() => setToast(null), kind === "ok" ? 2600 : 5000);
+  }
 
   const profiles = dashboard?.profiles ?? [];
   const officialProfiles = profiles.filter((profile) => profile.kind === "official");
@@ -61,8 +69,10 @@ export function Dashboard() {
       await api.switchProfile(profile.id);
       await refresh();
       setNotice(`已启动 ${profile.title}`);
+      showToast("ok", `已切换到 ${profile.title}`);
     } catch (error) {
       setNotice(String(error));
+      showToast("error", `切换失败：${String(error)}`);
       setProgress({ profileId: profile.id, stage: "failed", message: String(error), percent: 100 });
     } finally {
       setBusyProfileId(null);
@@ -89,15 +99,18 @@ export function Dashboard() {
       if (editingProvider) {
         await api.updateProvider(editingProvider.id, input as ProviderUpdateInput);
         setNotice("API provider 已更新");
+        showToast("ok", "API provider 已更新");
       } else {
         await api.createProvider(input as ProviderInput);
         setNotice("API provider 已创建");
+        showToast("ok", "API provider 已创建");
       }
       setProviderDialogOpen(false);
       setEditingProvider(null);
       await refresh();
     } catch (error) {
       setNotice(String(error));
+      showToast("error", `保存失败：${String(error)}`);
     }
   }
 
@@ -226,7 +239,7 @@ export function Dashboard() {
                   onClick={() => setProviderDialogOpen(true)}
                 >
                   <Plus size={18} />
-                  添加第一个 Responses-compatible API provider
+                  添加第一个 API provider（DeepSeek / OpenRouter / Kimi …）
                 </button>
               ) : null}
             </div>
@@ -243,6 +256,19 @@ export function Dashboard() {
           <div className="flex items-center gap-3 rounded-2xl bg-panel px-5 py-4 text-sm font-bold text-sub shadow-card">
             <Loader2 className="animate-spin" size={18} />
             正在载入 Refill
+          </div>
+        </div>
+      ) : null}
+
+      {toast ? (
+        <div className="fixed bottom-5 right-5 z-50 animate-[fadeIn_0.15s_ease-out]">
+          <div
+            className={`flex max-w-[380px] items-start gap-2.5 rounded-2xl px-4 py-3 text-sm font-bold shadow-card ${
+              toast.kind === "ok" ? "bg-[#0c7a4d] text-white" : "bg-red text-white"
+            }`}
+          >
+            {toast.kind === "ok" ? <CheckCircle2 size={18} className="mt-0.5 shrink-0" /> : <XCircle size={18} className="mt-0.5 shrink-0" />}
+            <span className="min-w-0 break-words">{toast.text}</span>
           </div>
         </div>
       ) : null}

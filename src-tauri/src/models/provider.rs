@@ -70,3 +70,29 @@ pub struct ProviderValidation {
     pub ok: bool,
     pub message: String,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderTestInput {
+    pub base_url: String,
+    pub model: String,
+    pub wire_api: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    // Present when testing an existing provider; lets us fall back to the
+    // key already stored in Keychain if the user left the field blank.
+    #[serde(default)]
+    pub profile_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderTestResult {
+    pub ok: bool,
+    pub status: u16,
+    pub latency_ms: u64,
+    pub message: String,
+    // True when a "responses" test hit a 404, i.e. the upstream likely only
+    // speaks Chat Completions and the user should switch protocols.
+    pub suggest_chat: bool,
+}

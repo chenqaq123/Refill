@@ -106,6 +106,22 @@ export type ProviderValidation = {
   message: string;
 };
 
+export type ProviderTestInput = {
+  baseUrl: string;
+  model: string;
+  wireApi: WireApi;
+  apiKey?: string | null;
+  profileId?: string | null;
+};
+
+export type ProviderTestResult = {
+  ok: boolean;
+  status: number;
+  latencyMs: number;
+  message: string;
+  suggestChat: boolean;
+};
+
 export type AppSettings = {
   refreshIntervalSeconds: number;
   shareHistory: boolean;

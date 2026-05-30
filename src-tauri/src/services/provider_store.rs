@@ -88,6 +88,21 @@ impl ProviderStore {
         fs::remove_dir_all(profile_dir).map_err(|error| error.to_string())
     }
 
+    pub fn read_key(&self, config: &ApiProviderConfig) -> Option<String> {
+        shell::run(
+            "/usr/bin/security",
+            &[
+                "find-generic-password",
+                "-w",
+                "-s",
+                &config.keychain_service(),
+            ],
+        )
+        .ok()
+        .map(|key| key.trim().to_string())
+        .filter(|key| !key.is_empty())
+    }
+
     pub fn key_exists(&self, config: &ApiProviderConfig) -> bool {
         shell::run(
             "/usr/bin/security",

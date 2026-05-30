@@ -12,6 +12,7 @@
 //! is far more robust than mapping streaming deltas one-to-one, at the cost of
 //! the reply arriving in one chunk instead of token-by-token.
 
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,9 +34,18 @@ use super::profile_store::ProfileStore;
 
 pub const PORT: u16 = 8765;
 
+/// Port the proxy actually bound to. Set once at startup (it may differ from
+/// PORT if 8765 was taken), and read when generating provider config so the
+/// base_url always matches the live server.
+static PROXY_PORT: AtomicU16 = AtomicU16::new(PORT);
+
+pub fn active_port() -> u16 {
+    PROXY_PORT.load(Ordering::Relaxed)
+}
+
 /// The base_url written into a chat-provider's config.toml.
 pub fn upstream_url(provider_id: &str) -> String {
-    format!("http://127.0.0.1:{PORT}/v1/{provider_id}")
+    format!("http://127.0.0.1:{}/v1/{provider_id}", active_port())
 }
 
 #[derive(Clone)]
@@ -57,16 +67,27 @@ pub fn start(store: Arc<ProfileStore>) {
             .route("/{provider}/responses", post(handle_responses))
             .with_state(state);
 
-        let addr = format!("127.0.0.1:{PORT}");
-        match tokio::net::TcpListener::bind(&addr).await {
-            Ok(listener) => {
+        // Try the preferred port, then a few fallbacks if it is already taken
+        // (e.g. another Switcher instance), so the proxy always comes up.
+        let mut listener = None;
+        for offset in 0..10u16 {
+            let port = PORT + offset;
+            match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+                Ok(bound) => {
+                    PROXY_PORT.store(port, Ordering::Relaxed);
+                    listener = Some(bound);
+                    break;
+                }
+                Err(_) => continue,
+            }
+        }
+        match listener {
+            Some(listener) => {
                 if let Err(error) = axum::serve(listener, app).await {
                     eprintln!("[proxy] server error: {error}");
                 }
             }
-            Err(error) => {
-                eprintln!("[proxy] could not bind {addr}: {error}");
-            }
+            None => eprintln!("[proxy] could not bind any port in {PORT}..{}", PORT + 10),
         }
     });
 }
