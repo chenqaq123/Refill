@@ -43,10 +43,6 @@ function fmtReset(resetsAt?: number | null): string {
   if (!resetsAt) return "—";
   return new Date(resetsAt * 1000).toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
-function barColor(used: number): string {
-  return used >= 90 ? "bg-red" : used >= 70 ? "bg-amber" : "bg-blue";
-}
-
 export function UsagePage({ store, initialTab }: { store: RefillStore; initialTab?: Tab }) {
   const [tab, setTab] = useState<Tab>(initialTab ?? "official");
   const [summary, setSummary] = useState<UsageSummary | null>(null);
@@ -143,6 +139,71 @@ export function UsagePage({ store, initialTab }: { store: RefillStore; initialTa
   );
 }
 
+function fmtResetShort(resetsAt?: number | null): string {
+  if (!resetsAt) return "";
+  return new Date(resetsAt * 1000).toLocaleString([], { month: "numeric", day: "numeric" });
+}
+
+// Time-series bar chart for one rate-limit window kind. Oldest → newest L→R,
+// bar height = peak used %, colored by threshold, current period highlighted.
+function WindowChart({ records }: { records: UsageWindowRecord[] }) {
+  if (records.length === 0) return null;
+  const data = [...records].slice(0, 28).reverse(); // recent periods, time order
+  const sparse = data.length > 8;
+  const current = records.find((r) => r.isCurrent) ?? records[0];
+  const currentUsed = Math.round(current.usedPercent);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-baseline justify-between">
+        <span className="text-xs font-bold text-neutral-600">{windowTitle(records[0])}</span>
+        <span className="text-xs font-semibold text-sub">
+          本周期 <span className={`text-sm font-black ${currentUsed >= 90 ? "text-red" : currentUsed >= 70 ? "text-amber" : "text-blue"}`}>{currentUsed}%</span>
+        </span>
+      </div>
+
+      <div className="relative flex h-[128px] items-end gap-[3px] rounded-xl border border-line/70 bg-muted/30 px-2 pb-0 pt-5">
+        {/* 100% / 50% gridlines */}
+        <div className="pointer-events-none absolute inset-x-2 top-5 border-t border-dashed border-line" />
+        <div className="pointer-events-none absolute inset-x-2 top-[calc(50%+10px)] border-t border-dashed border-line/50" />
+        <span className="pointer-events-none absolute right-2 top-0.5 text-[9px] font-bold text-sub/50">100%</span>
+
+        {data.map((r) => {
+          const used = Math.round(r.usedPercent);
+          const color = used >= 90 ? "bg-red" : used >= 70 ? "bg-amber" : "bg-blue";
+          return (
+            <div
+              key={`${r.kind}-${r.resetsAt}`}
+              className="group relative flex h-full flex-1 items-end justify-center"
+              title={`${fmtReset(r.resetsAt)} · ${used}%`}
+            >
+              {!sparse ? (
+                <span className="absolute -top-4 text-[10px] font-bold text-sub">{used}%</span>
+              ) : (
+                <span className="absolute -top-4 text-[10px] font-bold text-ink opacity-0 transition-opacity group-hover:opacity-100">{used}%</span>
+              )}
+              <motion.div
+                className={`w-full max-w-[30px] rounded-md ${color} ${r.isCurrent ? "ring-2 ring-blue/50 ring-offset-1" : ""}`}
+                initial={{ height: 0 }}
+                animate={{ height: `${Math.max(2, Math.min(100, used))}%` }}
+                transition={{ duration: 0.5, ease: "easeOut" }}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex gap-[3px] px-2">
+        {data.map((r, i) => (
+          <div key={`${r.kind}-${r.resetsAt}-x`} className="flex-1 truncate text-center text-[9px] font-semibold text-sub/55">
+            {!sparse || i === 0 || i === data.length - 1 ? fmtResetShort(r.resetsAt) : ""}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function OfficialTab({ official, history }: { official: Profile[]; history: Record<string, UsageWindowRecord[]> }) {
   if (official.length === 0) {
     return <Empty>还没有官方账号。登录后这里会显示每个账号每个周期的额度消耗。</Empty>;
@@ -166,29 +227,10 @@ function OfficialTab({ official, history }: { official: Profile[]; history: Reco
             {records.length === 0 ? (
               <p className="mt-3 text-xs font-semibold text-sub/70">暂无记录，用这个账号跑一会儿后刷新。</p>
             ) : (
-              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                {kinds.map((kind) => {
-                  const rows = records.filter((r) => r.kind === kind);
-                  return (
-                    <div key={kind} className="space-y-1.5">
-                      <div className="text-xs font-bold text-neutral-600">{windowTitle(rows[0])}</div>
-                      {rows.slice(0, 6).map((r) => {
-                        const used = Math.round(r.usedPercent);
-                        return (
-                          <div key={`${r.kind}-${r.resetsAt}`} className={`rounded-xl border px-2.5 py-1.5 ${r.isCurrent ? "border-blue/40 bg-blue/5" : "border-line"}`}>
-                            <div className="flex items-center justify-between text-[11px] font-semibold text-sub">
-                              <span>{r.isCurrent ? "本周期" : "周期"} · {fmtReset(r.resetsAt)}</span>
-                              <span className="font-black tabular-nums text-ink">{used}%</span>
-                            </div>
-                            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-neutral-100">
-                              <motion.div className={`h-full rounded-full ${barColor(used)}`} initial={{ width: 0 }} animate={{ width: `${Math.max(2, Math.min(100, used))}%` }} transition={{ duration: 0.5 }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
+              <div className="mt-4 grid grid-cols-1 gap-5 md:grid-cols-2">
+                {kinds.map((kind) => (
+                  <WindowChart key={kind} records={records.filter((r) => r.kind === kind)} />
+                ))}
               </div>
             )}
           </div>
