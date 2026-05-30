@@ -39,6 +39,7 @@ impl ProviderStore {
             base_url: normalized_base_url(&input.base_url),
             model: input.model.trim().to_string(),
             provider_id,
+            wire_api: normalized_wire_api(input.wire_api.as_deref()),
             created_at: Utc::now().to_rfc3339(),
         };
 
@@ -65,6 +66,7 @@ impl ProviderStore {
             base_url: normalized_base_url(&input.base_url),
             model: input.model.trim().to_string(),
             provider_id: current.provider_id,
+            wire_api: normalized_wire_api(input.wire_api.as_deref().or(Some(&current.wire_api))),
             created_at: current.created_at,
         };
 
@@ -142,6 +144,14 @@ impl ProviderStore {
         let project_config = template
             .map(|path| extract_project_config(&path.join("config.toml")))
             .unwrap_or_default();
+        // Codex only speaks the Responses API. When the upstream provider only
+        // offers Chat Completions, point Codex at the local translation proxy
+        // instead of the real base_url; the proxy converts both ways.
+        let effective_base_url = if config.wire_api == "chat" {
+            super::proxy::upstream_url(&config.provider_id)
+        } else {
+            config.base_url.clone()
+        };
         let text = format!(
             r#"model_provider = "{provider_id}"
 model = "{model}"
@@ -163,7 +173,7 @@ args = ["find-generic-password", "-w", "-s", "{service}"]
             provider_key = toml_bare_key(&config.provider_id),
             model = toml_escape(&config.model),
             name = toml_escape(&config.name),
-            base_url = toml_escape(&config.base_url),
+            base_url = toml_escape(&effective_base_url),
             service = toml_escape(&config.keychain_service()),
             project_config = project_config,
         );
@@ -221,6 +231,13 @@ fn slugify(value: &str) -> String {
 
 fn normalized_base_url(value: &str) -> String {
     value.trim().trim_end_matches('/').to_string()
+}
+
+fn normalized_wire_api(value: Option<&str>) -> String {
+    match value.map(str::trim) {
+        Some("chat") => "chat".to_string(),
+        _ => "responses".to_string(),
+    }
 }
 
 fn toml_escape(value: &str) -> String {

@@ -58,6 +58,19 @@ impl ProfileStore {
         &self.provider_store
     }
 
+    /// Resolve a provider_id (e.g. "switcher-deepseek") to the real upstream
+    /// base_url. Used by the translation proxy to forward requests.
+    pub fn provider_base_url(&self, provider_id: &str) -> Option<String> {
+        self.profile_directories()
+            .into_iter()
+            .find_map(|(_, dir)| {
+                self.provider_store
+                    .read_provider(&dir)
+                    .filter(|provider| provider.provider_id == provider_id)
+                    .map(|provider| provider.base_url)
+            })
+    }
+
     pub fn profile_url(&self, id: &str) -> PathBuf {
         self.profile_root().join(id)
     }
@@ -415,6 +428,7 @@ impl ProfileStore {
             base_url: config.base_url.clone(),
             model: config.model.clone(),
             provider_id: config.provider_id.clone(),
+            wire_api: config.wire_api.clone(),
             key_status: if self.provider_store.key_exists(config) {
                 "exists".to_string()
             } else {

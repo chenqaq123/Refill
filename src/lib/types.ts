@@ -15,12 +15,15 @@ export type UsageSnapshot = {
   hasEstimatedRecovery: boolean;
 };
 
+export type WireApi = "responses" | "chat";
+
 export type ApiProvider = {
   id: string;
   name: string;
   baseUrl: string;
   model: string;
   providerId: string;
+  wireApi: WireApi;
   keyStatus: "exists" | "missing";
   createdAt: string;
 };
@@ -65,6 +68,7 @@ export type ProviderInput = {
   baseUrl: string;
   model: string;
   apiKey: string;
+  wireApi: WireApi;
 };
 
 export type ProviderUpdateInput = {
@@ -72,6 +76,7 @@ export type ProviderUpdateInput = {
   baseUrl: string;
   model: string;
   apiKey?: string | null;
+  wireApi: WireApi;
 };
 
 export type SwitchStage =

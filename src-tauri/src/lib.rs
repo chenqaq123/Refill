@@ -7,6 +7,12 @@ use services::app_state::AppState;
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
+        .setup(|app| {
+            use tauri::Manager;
+            let state = app.state::<AppState>();
+            services::proxy::start(state.store.clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::profiles::list_profiles,
             commands::profiles::refresh_profiles,
