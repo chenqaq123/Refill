@@ -134,6 +134,35 @@ pub fn apply_shared_workspace_state(
     fs::write(global_path, data).map_err(|error| error.to_string())
 }
 
+pub fn align_thread_provider(store: &ProfileStore, profile_dir: &Path) -> Result<(), String> {
+    let provider_id = store
+        .provider_store()
+        .read_provider(profile_dir)
+        .map(|provider| provider.provider_id)
+        .unwrap_or_else(|| "openai".to_string());
+    let escaped_provider = provider_id.replace('\'', "''");
+
+    for base_name in sqlite_state_base_names(&store.shared_desktop_state()) {
+        if !base_name.starts_with("state_") {
+            continue;
+        }
+        let shared_base = store.shared_desktop_state().join(&base_name);
+        if !shared_base.exists() {
+            continue;
+        }
+        let sql = format!(
+            "UPDATE threads SET model_provider = '{}' WHERE model_provider != '{}'; PRAGMA wal_checkpoint(TRUNCATE);",
+            escaped_provider, escaped_provider
+        );
+        shell::run(
+            "/usr/bin/sqlite3",
+            &[&shared_base.display().to_string(), &sql],
+        )
+        .map(|_| ())?;
+    }
+    Ok(())
+}
+
 pub fn hydrate_desktop_profile(store: &ProfileStore, profile_id: &str) -> Result<(), String> {
     let target = store.profile_url(profile_id);
     if !target.exists() {

@@ -1,6 +1,6 @@
 [package]
 name = "refill"
-version = "3.0.3"
+version = "3.0.4"
 description = "Codex account and API provider switcher"
 authors = ["Refill"]
 edition = "2021"

@@ -68,6 +68,7 @@ pub fn switch_profile(
     }
     symlink(&target, store.codex_home()).map_err(|error| error.to_string())?;
     store.write_activation_date(&target)?;
+    desktop_state::align_thread_provider(store, &target)?;
 
     emit(app, profile_id, "launching_codex", "正在启动 Codex", 90);
     launch_codex()?;
@@ -102,6 +103,7 @@ pub fn save_current_profile(store: &ProfileStore) -> Result<String, String> {
     symlink(&target, &codex_home).map_err(|error| error.to_string())?;
     desktop_state::reconcile_all_profiles(store);
     store.reconcile_usage_caches();
+    desktop_state::align_thread_provider(store, &target)?;
     launch_codex()?;
     Ok(profile_id)
 }
