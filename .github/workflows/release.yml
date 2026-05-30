@@ -13,10 +13,11 @@ name: Release
 #   APPLE_PASSWORD                       – app-specific password for notarization
 #   APPLE_TEAM_ID                        – your 10-char Team ID
 
+# Manual for now (run from the Actions tab) to avoid colliding with manually
+# published releases. Switch back to `push: tags: [ "v*" ]` once Apple signing
+# secrets are in place (see RELEASING.md).
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 jobs:
   release:

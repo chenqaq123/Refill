@@ -66,19 +66,11 @@ impl AccountInfo {
     }
 
     pub fn subtitle(&self) -> String {
-        let mut parts = Vec::new();
-        if let Some(name) = &self.name {
-            if Some(name) != self.email.as_ref() && !name.is_empty() {
-                parts.push(name.clone());
-            }
-        }
-        if let Some(id) = &self.account_id {
-            parts.push(format!("ID {}", &id[..id.len().min(8)]));
-        }
-        if parts.is_empty() {
-            "ChatGPT login".to_string()
-        } else {
-            parts.join(" · ")
+        // Account id is kept for matching but intentionally not surfaced in the
+        // UI (opaque identifier, and avoids leaking it in shared screenshots).
+        match &self.name {
+            Some(name) if Some(name) != self.email.as_ref() && !name.is_empty() => name.clone(),
+            _ => "ChatGPT 账号".to_string(),
         }
     }
 

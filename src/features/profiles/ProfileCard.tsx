@@ -3,7 +3,7 @@ import { Button } from "../../components/ui/Button";
 import { Chip } from "../../components/ui/Chip";
 import type { Profile, SwitchProgress } from "../../lib/types";
 import { cn } from "../../lib/cn";
-import { hostFromUrl, shortPath } from "../../lib/format";
+import { hostFromUrl } from "../../lib/format";
 import { UsageBadge } from "../usage/UsageBadge";
 
 type ProfileCardProps = {
@@ -89,7 +89,6 @@ export function ProfileCard({
           <div className="mt-0.5 truncate text-xs font-semibold text-sub" title={profile.provider?.baseUrl}>
             {profile.provider?.baseUrl}
           </div>
-          <div className="mt-1 truncate text-[11px] font-semibold text-sub/55">{shortPath(profile.diagnostics.profilePath)}</div>
         </div>
       ) : onUsage ? (
         <button

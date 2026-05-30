@@ -1,184 +1,136 @@
-# Codex Account Switcher
+# Refill
 
-This repo keeps multiple Codex logins separated by profile. It does not copy tokens into scripts. Each profile gets its own `CODEX_HOME` directory under `~/.codex-profiles`.
+**One switcher for all your Codex accounts and API providers — with one shared history.**
+**一个开关，管理你所有的 Codex 账号与 API provider —— 共享同一条对话历史。**
 
-## Refill v3 Tauri Preview
+Refill is a macOS app that lets you switch between multiple official Codex
+(ChatGPT) accounts and third‑party API providers in one click, while keeping a
+single, unified conversation history across all of them. It also shows how much
+of each account's plan you've burned, and what your API spend looks like.
 
-v3 is a parallel Tauri desktop console named **Refill**. It keeps the SwiftUI v2 app intact, but adds a modern React/Tailwind UI with a Rust backend for profile scanning, API provider management, usage display, shared history diagnostics, and background switching progress.
+> Status: actively developed. Built with Tauri (Rust) + React.
 
-Build the v3 app:
+---
 
-```sh
+## English
+
+### Why
+- You juggle several Codex/ChatGPT accounts to get around weekly rate limits.
+- You also want to use cheaper / different models (DeepSeek, OpenRouter, Kimi,
+  local Ollama…) inside Codex.
+- Switching normally means losing your conversation history and re‑logging in.
+
+Refill makes switching instant and **keeps one history** no matter which account
+or provider is active.
+
+### Features
+- **One‑click account switching** — official Codex accounts and API providers.
+- **Shared conversation history** — sessions, thread state and projects are
+  shared across every profile, so history never disappears when you switch.
+- **Use Chat‑Completions‑only providers with Codex** — Codex only speaks the
+  OpenAI *Responses API*. Refill runs a built‑in local proxy that translates to
+  and from Chat Completions, so providers like **DeepSeek** work transparently —
+  with **streaming, reasoning (thinking) and tool calls** supported.
+- **Usage & cost**
+  - *Official accounts*: per‑account weekly / 5‑hour quota windows, charted over
+    time, so you can see exactly how much each period lets you consume.
+  - *API providers*: real token usage with editable per‑model pricing → estimated
+    cost, plus a request log.
+- **Frictionless setup** — provider presets (DeepSeek / OpenRouter / Kimi /
+  Ollama), a live connection test, and automatic protocol detection.
+- **Safe by default** — API keys live in the macOS Keychain (never in config
+  files), everything stays local, no telemetry.
+- **Built to grow** — the tool rail is ready for more than Codex (Claude Code,
+  Gemini CLI… are scaffolded).
+
+### Install
+1. Download the latest `.dmg` from [Releases](../../releases).
+2. Open it and drag **Refill** to Applications.
+3. The app is not yet notarized, so on first launch right‑click it and choose
+   **Open** (or run `xattr -dr com.apple.quarantine /Applications/Refill.app`).
+
+### Build from source
+Requires Rust, Node 20+, and the Tauri prerequisites.
+```bash
 npm install
-npm run tauri:build
+npm run tauri:build      # produces .app + .dmg under src-tauri/target/release/bundle
+# or for development:
+npm run tauri:dev
 ```
 
-The generated app and DMG are:
+### How it works
+- Each account/provider is a profile under `~/.codex-profiles/<id>`; `~/.codex`
+  is symlinked to the active one.
+- Sessions, the thread‑state SQLite DBs and project list are shared via a
+  `_shared-history` folder, and the recorded provider is realigned on switch so
+  history stays visible under whatever account is active.
+- For Chat‑Completions‑only providers, the profile's `config.toml` points Codex
+  at `127.0.0.1:8765`, where Refill's proxy translates Responses ⇄ Chat.
 
-```sh
-/Users/cgx/Documents/Switcher/src-tauri/target/release/bundle/macos/Refill.app
-/Users/cgx/Documents/Switcher/src-tauri/target/release/bundle/dmg/Refill_3.0.5_aarch64.dmg
+### Privacy
+API keys are stored in the macOS Keychain. Conversation history, usage records
+and logs stay on your machine under `~/.codex-profiles`. Refill sends nothing
+anywhere except the API requests you make to your own providers.
+
+---
+
+## 中文
+
+### 为什么做它
+- 你有多个 Codex/ChatGPT 账号，用来绕开每周额度限制。
+- 你也想在 Codex 里用更便宜 / 不同的模型（DeepSeek、OpenRouter、Kimi、本地
+  Ollama 等）。
+- 但平时切换账号会丢历史、还要重新登录。
+
+Refill 让切换变成一键完成，并且**无论用哪个账号或 provider，都共享同一条历史**。
+
+### 功能
+- **一键切换账号** —— 官方 Codex 账号与 API provider 都支持。
+- **共享对话历史** —— 会话、线程状态、项目列表在所有 profile 间共享，切换账号
+  历史也不会消失。
+- **让只支持 Chat Completions 的 provider 也能用 Codex** —— Codex 只会说 OpenAI
+  的 *Responses API*。Refill 内置一个本地代理做双向协议翻译，于是 **DeepSeek**
+  这类服务可以透明接入，并且**支持流式输出、思维链、工具调用**。
+- **用量与成本**
+  - *官方账号*：按账号展示「周 / 5 小时」额度窗口，并用柱状图呈现每个周期的
+    消耗，让你清楚每个阶段到底能用多少。
+  - *API provider*：真实 token 用量 + 可编辑的每模型单价 → 预估花费，外加请求日志。
+- **顺滑的添加流程** —— 内置 provider 预设（DeepSeek / OpenRouter / Kimi /
+  Ollama）、实时连通性测试、自动协议探测。
+- **默认安全** —— API Key 存进 macOS 钥匙串（绝不写进配置文件），数据全部本地，
+  无任何遥测。
+- **为扩展而生** —— 左侧工具栏已为 Codex 之外的工具（Claude Code、Gemini CLI…）
+  预留位置。
+
+### 安装
+1. 从 [Releases](../../releases) 下载最新的 `.dmg`。
+2. 打开后把 **Refill** 拖进「应用程序」。
+3. 应用尚未做 Apple 公证，首次打开请**右键 → 打开**（或执行
+   `xattr -dr com.apple.quarantine /Applications/Refill.app`）。
+
+### 从源码构建
+需要 Rust、Node 20+ 以及 Tauri 的依赖环境。
+```bash
+npm install
+npm run tauri:build      # 产物在 src-tauri/target/release/bundle 下
+# 开发模式：
+npm run tauri:dev
 ```
 
-v3 uses the same profile layout as v2:
+### 工作原理
+- 每个账号 / provider 是 `~/.codex-profiles/<id>` 下的一个 profile，`~/.codex`
+  软链到当前激活的那个。
+- 会话、线程状态 SQLite 库、项目列表通过 `_shared-history` 目录共享；切换时会
+  把记录里的 provider 对齐，保证历史在当前账号下依然可见。
+- 对于只支持 Chat Completions 的 provider，profile 的 `config.toml` 把 Codex
+  指向 `127.0.0.1:8765`，由 Refill 的代理完成 Responses ⇄ Chat 的翻译。
 
-- `~/.codex-profiles`
-- `.codex-switcher/provider.json`
-- Keychain service `local.codex.account-switcher.<providerID>`
-- `_shared-history/sessions`
-- `_shared-history/session_index.jsonl`
-- `_shared-history/desktop-state`
+### 隐私
+API Key 存于 macOS 钥匙串。对话历史、用量记录与日志都保存在本机
+`~/.codex-profiles` 下。除了你主动发往自己 provider 的 API 请求，Refill 不向任何
+地方发送数据。
 
-The v3 UI is a desktop console: official accounts and API providers are grouped into cards, switching emits progress instead of blocking the UI, and the detail panel exposes diagnostics without showing sensitive keys.
+---
 
-### v3.0.3 Fixes
-
-- Repairs shared `sessions`, `session_index.jsonl`, and Desktop sqlite state across every saved profile after Codex exits during a switch, so newly added API profiles keep the same chat history.
-- Rebuilds missing official-account usage caches from that account's activation window or its backups without overwriting existing caches.
-
-### v3.0.4 Fixes
-
-- Aligns shared thread `model_provider` to the target official account or API provider during switching, so OpenRouter/DeepSeek can see the same left-sidebar project chat history.
-
-### v3.0.5 Fixes
-
-- Marks imported shared threads with existing titles/previews/user messages as visible user-event threads, fixing project folders that showed `暂无对话` even though the history rows existed.
-
-## Mac App
-
-Build the double-clickable app:
-
-```sh
-/Users/cgx/Documents/Switcher/build.sh
-```
-
-Then open:
-
-```sh
-open "/Users/cgx/Documents/Switcher/dist/Codex Account Switcher.app"
-```
-
-The app can:
-
-- list profiles in `~/.codex-profiles`
-- show each account as a card with email, plan, readiness, and current-account status
-- show effective remaining usage; expired 5h/7d windows are locally treated as recovered until the next real Codex snapshot arrives
-- save the current `~/.codex` automatically using account info, without asking for a profile name
-- switch profiles with one click by quitting Codex, hydrating missing Desktop support files, relinking `~/.codex`, and reopening Codex in a background task
-- add Responses-compatible third-party API profiles whose API keys are stored in macOS Keychain
-- open Terminal for first-time login to a new profile; generated login profiles are renamed from account info after refresh
-
-## Setup
-
-Make the wrapper available in your shell:
-
-```sh
-chmod +x /Users/cgx/Documents/Switcher/bin/codex-as
-```
-
-Optional convenience alias:
-
-```sh
-alias codex-as=/Users/cgx/Documents/Switcher/bin/codex-as
-```
-
-## First-Time Login
-
-Log in once per account:
-
-```sh
-/Users/cgx/Documents/Switcher/bin/codex-as --login work
-/Users/cgx/Documents/Switcher/bin/codex-as --login personal
-```
-
-Then check them:
-
-```sh
-/Users/cgx/Documents/Switcher/bin/codex-as --status work
-/Users/cgx/Documents/Switcher/bin/codex-as --status personal
-```
-
-## Daily Use
-
-Start Codex with a chosen account:
-
-```sh
-/Users/cgx/Documents/Switcher/bin/codex-as work
-/Users/cgx/Documents/Switcher/bin/codex-as personal -C /Users/cgx/Documents/Switcher
-```
-
-Run non-interactive commands:
-
-```sh
-/Users/cgx/Documents/Switcher/bin/codex-as work exec "review this repo"
-```
-
-List profiles:
-
-```sh
-/Users/cgx/Documents/Switcher/bin/codex-as --list
-```
-
-## Desktop App Note
-
-The CLI respects `CODEX_HOME`, so this profile approach is clean for terminal use.
-
-For Desktop, use `bin/codex-desktop-as`. It switches the whole `~/.codex` directory, so each account keeps its own auth, config, sessions, logs, and local state.
-
-First save your current Desktop state into a profile from the Mac app. The app derives the profile name from the signed-in account email and plan.
-
-The legacy CLI can still adopt with an explicit name:
-
-```sh
-chmod +x /Users/cgx/Documents/Switcher/bin/codex-desktop-as
-/Users/cgx/Documents/Switcher/bin/codex-desktop-as --adopt-current main
-```
-
-Then switch Desktop accounts:
-
-```sh
-/Users/cgx/Documents/Switcher/bin/codex-desktop-as work
-/Users/cgx/Documents/Switcher/bin/codex-desktop-as personal
-/Users/cgx/Documents/Switcher/bin/codex-desktop-as main
-```
-
-The script quits Codex, waits for it to exit, points `~/.codex` at the selected profile, then launches Codex again.
-
-If a profile was created by CLI login only, switching now hydrates it first. Hydration copies Desktop support files such as `computer-use`, plugins, caches, and UI state when they are missing, but it does not overwrite that profile's `auth.json`, `config.toml`, sessions, or logs.
-
-## Usage Display
-
-Codex only emits quota details while an account is actively used, so inactive accounts use their last cached `rate_limits` snapshot. The app now applies the reset timestamp locally:
-
-- if a 5h or 7d window has not reset yet, the card shows the remaining percentage from the cached snapshot
-- if the reset timestamp is in the past, the card shows that window as `100%` with `预计已恢复`
-- the footer still shows when the last real Codex snapshot was captured, so estimated recovery is not confused with a fresh server sync
-
-The next time the account is launched and Codex emits new `rate_limits`, that real snapshot replaces the estimate.
-
-## Third-Party API Profiles
-
-Click `API` in the app to add a Responses-compatible provider. Each provider gets a profile under `~/.codex-profiles` with a generated `config.toml` like:
-
-```toml
-model_provider = "switcher-provider-name"
-model = "your-model"
-
-[model_providers.switcher-provider-name]
-name = "Provider Name"
-base_url = "https://provider.example.com/v1"
-wire_api = "responses"
-requires_openai_auth = false
-
-[model_providers.switcher-provider-name.auth]
-command = "/usr/bin/security"
-args = ["find-generic-password", "-w", "-s", "local.codex.account-switcher.switcher-provider-name"]
-```
-
-The API key is not written to `config.toml`; it is stored in macOS Keychain and read by Codex through the `security` command when the provider is active.
-
-If a profile does not exist yet, create/login with:
-
-```sh
-/Users/cgx/Documents/Switcher/bin/codex-as --login work
-```
+## License
+MIT
