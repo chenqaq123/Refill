@@ -115,15 +115,23 @@ async fn handle_responses(
     let response = match upstream.send().await {
         Ok(response) => response,
         Err(error) => {
+            state.store.log_proxy(&format!(
+                "{provider} model={effective_model} -> {endpoint} CONNECT_ERROR {error}"
+            ));
             return error_response(
                 StatusCode::BAD_GATEWAY,
                 &format!("无法连接上游 {endpoint}：{error}"),
-            )
+            );
         }
     };
 
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
+    state.store.log_proxy(&format!(
+        "{provider} model={effective_model} -> {endpoint} {} ({} bytes)",
+        status.as_u16(),
+        text.len()
+    ));
     if !status.is_success() {
         return error_response(
             StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),

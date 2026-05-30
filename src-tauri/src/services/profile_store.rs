@@ -58,6 +58,17 @@ impl ProfileStore {
         &self.provider_store
     }
 
+    /// Append one line to the proxy request log so users have a record of what
+    /// the translation proxy forwarded. Best-effort; failures are ignored.
+    pub fn log_proxy(&self, line: &str) {
+        use std::io::Write;
+        let path = self.shared_history_root().join("proxy.log");
+        let _ = fs::create_dir_all(self.shared_history_root());
+        if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{} {}", Utc::now().to_rfc3339(), line);
+        }
+    }
+
     /// Resolve a provider_id (e.g. "switcher-deepseek") to its real upstream
     /// base_url and configured model. Used by the translation proxy to forward
     /// requests and to force the provider's model regardless of what Codex's
@@ -458,10 +469,10 @@ impl ProfileStore {
                     format!("{} · {}", provider.model, host)
                 })
                 .unwrap_or_else(|| info.subtitle()),
-            primary_pill: if is_provider {
-                "Responses API".to_string()
-            } else {
-                info.plan_display()
+            primary_pill: match provider.as_ref() {
+                Some(provider) if provider.wire_api == "chat" => "Chat · 本地代理".to_string(),
+                Some(_) => "Responses API".to_string(),
+                None => info.plan_display(),
             },
             is_active,
             is_ready: self.is_desktop_ready(&path),
