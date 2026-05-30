@@ -88,14 +88,12 @@ export function App() {
       />
 
       <main className="flex-1 overflow-y-auto px-7 py-6">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={page}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.2 }}
-          >
+        <motion.div
+          key={page}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.2 }}
+        >
             {page === "accounts" ? (
               <AccountsPage
                 store={store}
@@ -119,8 +117,7 @@ export function App() {
             ) : null}
             {page === "usage" ? <UsagePage store={store} initialTab={usageTab} /> : null}
             {page === "settings" ? <SettingsPage store={store} /> : null}
-          </motion.div>
-        </AnimatePresence>
+        </motion.div>
       </main>
 
       <DetailDrawer
