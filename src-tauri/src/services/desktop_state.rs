@@ -27,29 +27,48 @@ pub fn ensure_shared_history(store: &ProfileStore, profile_dir: &Path) -> Result
     fs::create_dir_all(store.shared_sessions()).map_err(|error| error.to_string())?;
 
     let local_sessions = profile_dir.join("sessions");
-    if !is_symlink(&local_sessions) {
+    if !is_symlink_to(&local_sessions, &store.shared_sessions()) {
         copy_dir_contents_if_missing(&local_sessions, &store.shared_sessions())?;
-        backup_and_remove(
-            store,
-            &local_sessions,
-            &format!("{}-sessions", profile_name(profile_dir)),
-        )?;
+        if is_symlink(&local_sessions) {
+            fs::remove_file(&local_sessions).map_err(|error| error.to_string())?;
+        } else {
+            backup_and_remove(
+                store,
+                &local_sessions,
+                &format!("{}-sessions", profile_name(profile_dir)),
+            )?;
+        }
         symlink(store.shared_sessions(), &local_sessions).map_err(|error| error.to_string())?;
     }
 
     let local_index = profile_dir.join("session_index.jsonl");
-    if !is_symlink(&local_index) {
+    if !is_symlink_to(&local_index, &store.shared_session_index()) {
         append_session_index_if_needed(&local_index, &store.shared_session_index())?;
-        backup_and_remove(
-            store,
-            &local_index,
-            &format!("{}-session-index", profile_name(profile_dir)),
-        )?;
+        if is_symlink(&local_index) {
+            fs::remove_file(&local_index).map_err(|error| error.to_string())?;
+        } else {
+            backup_and_remove(
+                store,
+                &local_index,
+                &format!("{}-session-index", profile_name(profile_dir)),
+            )?;
+        }
         symlink(store.shared_session_index(), &local_index).map_err(|error| error.to_string())?;
     } else if !store.shared_session_index().exists() {
         fs::write(store.shared_session_index(), "").map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+pub fn reconcile_all_profiles(store: &ProfileStore) {
+    for (_, profile_dir) in store.profile_directories() {
+        let _ = ensure_shared_history(store, &profile_dir);
+        let _ = ensure_shared_desktop_state(store, &profile_dir);
+        let _ = sync_workspace_state(store, &profile_dir);
+    }
+    for (_, profile_dir) in store.profile_directories() {
+        let _ = apply_shared_workspace_state(store, &profile_dir);
+    }
 }
 
 pub fn ensure_shared_desktop_state(store: &ProfileStore, profile_dir: &Path) -> Result<(), String> {
@@ -333,8 +352,11 @@ fn link_sqlite_set(base_name: &str, profile_dir: &Path, shared_dir: &Path) -> Re
     for suffix in ["", "-wal", "-shm"] {
         let local = profile_dir.join(format!("{base_name}{suffix}"));
         let shared = shared_dir.join(format!("{base_name}{suffix}"));
-        if is_symlink(&local) {
+        if is_symlink_to(&local, &shared) {
             continue;
+        }
+        if is_symlink(&local) {
+            fs::remove_file(&local).map_err(|error| error.to_string())?;
         }
         if local.exists() {
             fs::remove_file(&local).map_err(|error| error.to_string())?;
@@ -429,6 +451,15 @@ fn string_array(value: Option<&serde_json::Value>) -> Vec<String> {
 fn is_symlink(path: &Path) -> bool {
     fs::symlink_metadata(path)
         .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+fn is_symlink_to(path: &Path, expected: &Path) -> bool {
+    if !is_symlink(path) {
+        return false;
+    }
+    fs::read_link(path)
+        .map(|target| target == expected)
         .unwrap_or(false)
 }
 

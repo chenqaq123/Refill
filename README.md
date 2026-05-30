@@ -17,7 +17,7 @@ The generated app and DMG are:
 
 ```sh
 /Users/cgx/Documents/Switcher/src-tauri/target/release/bundle/macos/Refill.app
-/Users/cgx/Documents/Switcher/src-tauri/target/release/bundle/dmg/Refill_3.0.2_aarch64.dmg
+/Users/cgx/Documents/Switcher/src-tauri/target/release/bundle/dmg/Refill_3.0.3_aarch64.dmg
 ```
 
 v3 uses the same profile layout as v2:
@@ -30,6 +30,11 @@ v3 uses the same profile layout as v2:
 - `_shared-history/desktop-state`
 
 The v3 UI is a desktop console: official accounts and API providers are grouped into cards, switching emits progress instead of blocking the UI, and the detail panel exposes diagnostics without showing sensitive keys.
+
+### v3.0.3 Fixes
+
+- Repairs shared `sessions`, `session_index.jsonl`, and Desktop sqlite state across every saved profile after Codex exits during a switch, so newly added API profiles keep the same chat history.
+- Rebuilds missing official-account usage caches from that account's activation window or its backups without overwriting existing caches.
 
 ## Mac App
 

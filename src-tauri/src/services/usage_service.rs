@@ -53,15 +53,31 @@ pub fn newest_snapshot(
     root: &Path,
     activated_at: Option<DateTime<Utc>>,
 ) -> Option<RawUsageSnapshot> {
+    newest_snapshot_between(root, activated_at, None)
+}
+
+pub fn newest_snapshot_between(
+    root: &Path,
+    start_at: Option<DateTime<Utc>>,
+    end_before: Option<DateTime<Utc>>,
+) -> Option<RawUsageSnapshot> {
     usage_snapshots(root)
         .into_iter()
         .filter(|snapshot| {
-            let Some(activated_at) = activated_at else {
-                return true;
+            let Some(date) = parse_date(&snapshot.timestamp) else {
+                return false;
             };
-            parse_date(&snapshot.timestamp)
-                .map(|date| date >= activated_at)
-                .unwrap_or(false)
+            if let Some(start_at) = start_at {
+                if date < start_at {
+                    return false;
+                }
+            }
+            if let Some(end_before) = end_before {
+                if date >= end_before {
+                    return false;
+                }
+            }
+            true
         })
         .max_by(|left, right| left.timestamp.cmp(&right.timestamp))
 }

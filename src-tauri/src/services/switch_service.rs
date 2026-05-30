@@ -23,7 +23,11 @@ pub fn switch_profile(
     store.cache_usage_for_active_profile();
     quit_codex()?;
 
-    emit(app, profile_id, "syncing_current", "正在同步当前账号", 24);
+    emit(app, profile_id, "syncing_current", "正在修复共享会话", 24);
+    desktop_state::reconcile_all_profiles(store);
+    store.reconcile_usage_caches();
+
+    emit(app, profile_id, "syncing_current", "正在同步当前账号", 32);
     if let Some(active) = store.active_profile_id() {
         let active_dir = store.profile_url(&active);
         let _ = desktop_state::sync_workspace_state(store, &active_dir);
@@ -35,7 +39,7 @@ pub fn switch_profile(
         profile_id,
         "preparing_target",
         "正在准备目标 profile",
-        42,
+        48,
     );
     desktop_state::hydrate_desktop_profile(store, profile_id)?;
 
@@ -44,7 +48,7 @@ pub fn switch_profile(
         profile_id,
         "sharing_history",
         "正在共享会话和工作区",
-        60,
+        64,
     );
     desktop_state::ensure_shared_history(store, &target)?;
     desktop_state::ensure_shared_desktop_state(store, &target)?;
@@ -55,7 +59,7 @@ pub fn switch_profile(
         profile_id,
         "linking_codex_home",
         "正在切换 ~/.codex",
-        76,
+        78,
     );
     if store.is_codex_home_symlink() {
         fs::remove_file(store.codex_home()).map_err(|error| error.to_string())?;
@@ -96,6 +100,8 @@ pub fn save_current_profile(store: &ProfileStore) -> Result<String, String> {
     desktop_state::apply_shared_workspace_state(store, &target)?;
     store.write_activation_date(&target)?;
     symlink(&target, &codex_home).map_err(|error| error.to_string())?;
+    desktop_state::reconcile_all_profiles(store);
+    store.reconcile_usage_caches();
     launch_codex()?;
     Ok(profile_id)
 }

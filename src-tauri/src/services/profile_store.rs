@@ -64,6 +64,7 @@ impl ProfileStore {
 
     pub fn refresh_dashboard(&self) -> DashboardState {
         self.cache_usage_for_active_profile();
+        self.reconcile_usage_caches();
         let profiles = self.profiles();
         let unmanaged_current = self.current_unmanaged_profile();
         let active_label = profiles
@@ -93,34 +94,27 @@ impl ProfileStore {
         let unmanaged_info = self.current_unmanaged_account_info();
         let mut profiles = Vec::new();
 
-        if let Ok(entries) = fs::read_dir(self.profile_root()) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.is_dir() || !self.is_profile_directory(&path) {
-                    continue;
+        for (id, path) in self.profile_directories() {
+            let provider_config = self.provider_store.read_provider(&path);
+            let is_provider = provider_config.is_some();
+            let info = if let Some(provider) = &provider_config {
+                AccountInfo {
+                    name: Some(provider.name.clone()),
+                    email: None,
+                    plan: Some("api".to_string()),
+                    account_id: Some(provider.provider_id.clone()),
+                    subscription_until: None,
                 }
-                let id = entry.file_name().to_string_lossy().to_string();
-                let provider_config = self.provider_store.read_provider(&path);
-                let is_provider = provider_config.is_some();
-                let info = if let Some(provider) = &provider_config {
-                    AccountInfo {
-                        name: Some(provider.name.clone()),
-                        email: None,
-                        plan: Some("api".to_string()),
-                        account_id: Some(provider.provider_id.clone()),
-                        subscription_until: None,
-                    }
-                } else {
-                    self.account_info(&path)
-                };
-                let is_active = active.as_deref() == Some(&id)
-                    || (!is_provider
-                        && unmanaged_info
-                            .as_ref()
-                            .map(|current| info.matches(current))
-                            .unwrap_or(false));
-                profiles.push(self.profile_from_parts(id, path, info, provider_config, is_active));
-            }
+            } else {
+                self.account_info(&path)
+            };
+            let is_active = active.as_deref() == Some(&id)
+                || (!is_provider
+                    && unmanaged_info
+                        .as_ref()
+                        .map(|current| info.matches(current))
+                        .unwrap_or(false));
+            profiles.push(self.profile_from_parts(id, path, info, provider_config, is_active));
         }
 
         profiles.sort_by(|left, right| {
@@ -130,6 +124,20 @@ impl ProfileStore {
                 .then_with(|| left.kind.cmp(&right.kind))
                 .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
         });
+        profiles
+    }
+
+    pub fn profile_directories(&self) -> Vec<(String, PathBuf)> {
+        let mut profiles = Vec::new();
+        if let Ok(entries) = fs::read_dir(self.profile_root()) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() || !self.is_profile_directory(&path) {
+                    continue;
+                }
+                profiles.push((entry.file_name().to_string_lossy().to_string(), path));
+            }
+        }
         profiles
     }
 
@@ -239,16 +247,30 @@ impl ProfileStore {
                 return Some(live);
             }
         }
-        usage_service::read_usage_cache(dir).or_else(|| {
-            let latest = usage_service::newest_backup_snapshot(
-                &self.shared_history_root().join("backups"),
-                id,
-            );
-            if let Some(snapshot) = &latest {
-                let _ = usage_service::write_usage_cache(dir, snapshot);
+        if let Some(cached) = usage_service::read_usage_cache(dir) {
+            return Some(cached);
+        }
+        if let Some(activated_at) = self.read_activation_date(dir) {
+            let end_before = if Some(id.to_string()) == self.active_profile_id() {
+                None
+            } else {
+                self.next_activation_after(activated_at)
+            };
+            if let Some(snapshot) = usage_service::newest_snapshot_between(
+                &self.shared_sessions(),
+                Some(activated_at),
+                end_before,
+            ) {
+                let _ = usage_service::write_usage_cache(dir, &snapshot);
+                return Some(snapshot);
             }
-            latest
-        })
+        }
+        let latest =
+            usage_service::newest_backup_snapshot(&self.shared_history_root().join("backups"), id);
+        if let Some(snapshot) = &latest {
+            let _ = usage_service::write_usage_cache(dir, snapshot);
+        }
+        latest
     }
 
     pub fn active_usage_snapshot_from_shared_history(&self) -> Option<RawUsageSnapshot> {
@@ -270,6 +292,15 @@ impl ProfileStore {
         }
     }
 
+    pub fn reconcile_usage_caches(&self) {
+        for (id, dir) in self.profile_directories() {
+            if self.provider_store.read_provider(&dir).is_some() {
+                continue;
+            }
+            let _ = self.latest_usage_snapshot(&id, &dir);
+        }
+    }
+
     pub fn read_activation_date(&self, profile_dir: &Path) -> Option<chrono::DateTime<Utc>> {
         let text = fs::read_to_string(profile_dir.join(".codex-switcher").join("activated_at.txt"))
             .ok()?;
@@ -281,6 +312,17 @@ impl ProfileStore {
         fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
         fs::write(dir.join("activated_at.txt"), Utc::now().to_rfc3339())
             .map_err(|error| error.to_string())
+    }
+
+    fn next_activation_after(
+        &self,
+        activated_at: chrono::DateTime<Utc>,
+    ) -> Option<chrono::DateTime<Utc>> {
+        self.profile_directories()
+            .into_iter()
+            .filter_map(|(_, dir)| self.read_activation_date(&dir))
+            .filter(|date| *date > activated_at)
+            .min()
     }
 
     pub fn is_desktop_ready(&self, dir: &Path) -> bool {
