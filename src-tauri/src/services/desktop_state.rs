@@ -163,6 +163,25 @@ pub fn align_thread_provider(store: &ProfileStore, profile_dir: &Path) -> Result
     Ok(())
 }
 
+pub fn repair_visible_threads(store: &ProfileStore) -> Result<(), String> {
+    for base_name in sqlite_state_base_names(&store.shared_desktop_state()) {
+        if !base_name.starts_with("state_") {
+            continue;
+        }
+        let shared_base = store.shared_desktop_state().join(&base_name);
+        if !shared_base.exists() {
+            continue;
+        }
+        let sql = "UPDATE threads SET has_user_event = 1 WHERE has_user_event = 0 AND (length(first_user_message) > 0 OR length(preview) > 0 OR length(title) > 0); PRAGMA wal_checkpoint(TRUNCATE);";
+        shell::run(
+            "/usr/bin/sqlite3",
+            &[&shared_base.display().to_string(), sql],
+        )
+        .map(|_| ())?;
+    }
+    Ok(())
+}
+
 pub fn hydrate_desktop_profile(store: &ProfileStore, profile_id: &str) -> Result<(), String> {
     let target = store.profile_url(profile_id);
     if !target.exists() {

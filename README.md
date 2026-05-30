@@ -17,7 +17,7 @@ The generated app and DMG are:
 
 ```sh
 /Users/cgx/Documents/Switcher/src-tauri/target/release/bundle/macos/Refill.app
-/Users/cgx/Documents/Switcher/src-tauri/target/release/bundle/dmg/Refill_3.0.4_aarch64.dmg
+/Users/cgx/Documents/Switcher/src-tauri/target/release/bundle/dmg/Refill_3.0.5_aarch64.dmg
 ```
 
 v3 uses the same profile layout as v2:
@@ -39,6 +39,10 @@ The v3 UI is a desktop console: official accounts and API providers are grouped 
 ### v3.0.4 Fixes
 
 - Aligns shared thread `model_provider` to the target official account or API provider during switching, so OpenRouter/DeepSeek can see the same left-sidebar project chat history.
+
+### v3.0.5 Fixes
+
+- Marks imported shared threads with existing titles/previews/user messages as visible user-event threads, fixing project folders that showed `暂无对话` even though the history rows existed.
 
 ## Mac App
 
