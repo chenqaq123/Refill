@@ -60,11 +60,23 @@ impl ProfileStore {
 
     /// Append one line to the proxy request log so users have a record of what
     /// the translation proxy forwarded. Best-effort; failures are ignored.
+    ///
+    /// The log is size-capped: once it reaches 1 MiB it is rotated to a single
+    /// `.1` backup (replacing any previous one), so total disk use stays under
+    /// ~2 MiB and old entries are discarded automatically.
     pub fn log_proxy(&self, line: &str) {
         use std::io::Write;
-        let path = self.shared_history_root().join("proxy.log");
-        let _ = fs::create_dir_all(self.shared_history_root());
-        if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        const MAX_BYTES: u64 = 1024 * 1024;
+        let dir = self.shared_history_root();
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("proxy.log");
+        if fs::metadata(&path)
+            .map(|meta| meta.len() >= MAX_BYTES)
+            .unwrap_or(false)
+        {
+            let _ = fs::rename(&path, dir.join("proxy.log.1"));
+        }
+        if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
             let _ = writeln!(file, "{} {}", Utc::now().to_rfc3339(), line);
         }
     }
