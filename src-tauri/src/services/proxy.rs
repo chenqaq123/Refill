@@ -232,9 +232,18 @@ fn push_input_item(item: &Value, messages: &mut Vec<Value>) {
         _ => {
             if let Some(role) = item.get("role").and_then(Value::as_str) {
                 let content = content_to_text(item.get("content"));
-                messages.push(json!({ "role": role, "content": content }));
+                messages.push(json!({ "role": normalize_role(role), "content": content }));
             }
         }
+    }
+}
+
+/// Chat Completions only accepts system/user/assistant/tool. Map the Responses
+/// API's "developer" role (used by Codex for its instructions) to "system".
+fn normalize_role(role: &str) -> &str {
+    match role {
+        "developer" => "system",
+        other => other,
     }
 }
 
@@ -514,6 +523,21 @@ mod tests {
         assert_eq!(messages[1]["role"], "tool");
         assert_eq!(messages[1]["tool_call_id"], "c1");
         assert_eq!(messages[1]["content"], "file.txt");
+    }
+
+    #[test]
+    fn maps_developer_role_to_system() {
+        let request = json!({
+            "input": [
+                { "type": "message", "role": "developer", "content": [{ "type": "input_text", "text": "rules" }] },
+                { "type": "message", "role": "user", "content": "hi" }
+            ]
+        });
+        let chat = responses_to_chat(&request);
+        let messages = chat["messages"].as_array().unwrap();
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "rules");
+        assert_eq!(messages[1]["role"], "user");
     }
 
     #[test]
