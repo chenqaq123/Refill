@@ -77,7 +77,7 @@ async fn handle_responses(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let Some(base_url) = state.store.provider_base_url(&provider) else {
+    let Some((base_url, model)) = state.store.provider_upstream(&provider) else {
         return error_response(
             StatusCode::NOT_FOUND,
             &format!("未知的 provider：{provider}"),
@@ -91,7 +91,20 @@ async fn handle_responses(
         }
     };
 
-    let chat_body = responses_to_chat(&request);
+    let mut chat_body = responses_to_chat(&request);
+    // Codex's model picker may send a model that doesn't belong to this
+    // provider (e.g. "gpt-5.5"). Force the provider's configured model so the
+    // upstream always receives a name it recognizes.
+    let effective_model = if model.is_empty() {
+        request
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string()
+    } else {
+        model
+    };
+    chat_body["model"] = Value::String(effective_model.clone());
     let endpoint = format!("{}/chat/completions", base_url.trim_end_matches('/'));
 
     let mut upstream = state.client.post(&endpoint).json(&chat_body);
@@ -128,12 +141,7 @@ async fn handle_responses(
         }
     };
 
-    let model = request
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
-        .to_string();
-    let events = chat_to_responses_events(&chat, &model);
+    let events = chat_to_responses_events(&chat, &effective_model);
     let stream = stream::iter(
         events
             .into_iter()

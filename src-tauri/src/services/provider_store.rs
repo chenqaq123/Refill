@@ -141,9 +141,19 @@ impl ProviderStore {
         profile_dir: &Path,
         template: Option<&Path>,
     ) -> Result<(), String> {
-        let project_config = template
-            .map(|path| extract_project_config(&path.join("config.toml")))
-            .unwrap_or_default();
+        let config_path = profile_dir.join("config.toml");
+        // When editing an existing provider profile, Codex Desktop has usually
+        // added its own sections (mcp_servers, plugins, marketplaces, notify,
+        // projects, …). Preserve everything except the keys we manage, so a
+        // protocol/model change doesn't wipe Codex's setup. For a fresh profile
+        // we only carry over project trust from the template.
+        let preserved = if config_path.exists() {
+            preserve_unmanaged_config(&fs::read_to_string(&config_path).unwrap_or_default(), &config.provider_id)
+        } else {
+            template
+                .map(|path| extract_project_config(&path.join("config.toml")))
+                .unwrap_or_default()
+        };
         // Codex only speaks the Responses API. When the upstream provider only
         // offers Chat Completions, point Codex at the local translation proxy
         // instead of the real base_url; the proxy converts both ways.
@@ -167,7 +177,7 @@ requires_openai_auth = false
 command = "/usr/bin/security"
 args = ["find-generic-password", "-w", "-s", "{service}"]
 
-{project_config}
+{preserved}
 "#,
             provider_id = toml_escape(&config.provider_id),
             provider_key = toml_bare_key(&config.provider_id),
@@ -175,9 +185,9 @@ args = ["find-generic-password", "-w", "-s", "{service}"]
             name = toml_escape(&config.name),
             base_url = toml_escape(&effective_base_url),
             service = toml_escape(&config.keychain_service()),
-            project_config = project_config,
+            preserved = preserved.trim_end(),
         );
-        fs::write(profile_dir.join("config.toml"), text).map_err(|error| error.to_string())
+        fs::write(config_path, text).map_err(|error| error.to_string())
     }
 
     fn create_placeholders(&self, profile_dir: &Path) -> Result<(), String> {
@@ -272,4 +282,95 @@ fn extract_project_config(path: &Path) -> String {
         }
     }
     keep.join("\n")
+}
+
+/// Return the existing config.toml content minus the keys/tables Switcher
+/// regenerates: the root `model_provider` / `model` / `model_reasoning_effort`
+/// keys, and the `[model_providers.<id>]` (+ `.auth`) tables. Everything else
+/// (notify, mcp_servers, plugins, marketplaces, projects, …) is kept verbatim.
+fn preserve_unmanaged_config(content: &str, provider_id: &str) -> String {
+    let provider_table = format!("[model_providers.{}]", toml_bare_key(provider_id));
+    let auth_table = format!("[model_providers.{}.auth]", toml_bare_key(provider_id));
+    let managed_root_keys = ["model_provider", "model", "model_reasoning_effort"];
+
+    let mut keep: Vec<String> = Vec::new();
+    let mut in_root = true;
+    let mut skipping_table = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            in_root = false;
+            let header = trimmed.trim();
+            skipping_table = header == provider_table || header == auth_table;
+            if skipping_table {
+                continue;
+            }
+            keep.push(line.to_string());
+            continue;
+        }
+        if skipping_table {
+            continue;
+        }
+        if in_root {
+            let key = trimmed
+                .split('=')
+                .next()
+                .map(str::trim)
+                .unwrap_or_default();
+            if managed_root_keys.contains(&key) {
+                continue;
+            }
+        }
+        keep.push(line.to_string());
+    }
+
+    // Trim leading blank lines so the managed header sits flush.
+    while keep.first().map(|line| line.trim().is_empty()).unwrap_or(false) {
+        keep.remove(0);
+    }
+    keep.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preserve_unmanaged_config;
+
+    #[test]
+    fn preserves_codex_sections_strips_managed() {
+        let existing = r#"model_provider = "switcher-deepseek"
+model = "gpt-5.5"
+model_reasoning_effort = "medium"
+
+notify = ["x", "turn-ended"]
+
+[model_providers.switcher-deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+requires_openai_auth = false
+
+[model_providers.switcher-deepseek.auth]
+command = "/usr/bin/security"
+args = ["a"]
+
+[projects."/Users/cgx/Documents/Switcher"]
+trust_level = "trusted"
+
+[mcp_servers.node_repl]
+command = "/x/node_repl"
+"#;
+        let kept = preserve_unmanaged_config(existing, "switcher-deepseek");
+        // Managed root keys and the provider tables are gone.
+        assert!(!kept.contains("model_provider ="));
+        assert!(!kept.contains("model_reasoning_effort"));
+        assert!(!kept.contains("[model_providers.switcher-deepseek]"));
+        assert!(!kept.contains("base_url ="));
+        assert!(!kept.contains("[model_providers.switcher-deepseek.auth]"));
+        // Codex's own sections survive.
+        assert!(kept.contains("notify = [\"x\", \"turn-ended\"]"));
+        assert!(kept.contains("[projects.\"/Users/cgx/Documents/Switcher\"]"));
+        assert!(kept.contains("[mcp_servers.node_repl]"));
+        assert!(kept.contains("command = \"/x/node_repl\""));
+    }
 }

@@ -58,16 +58,18 @@ impl ProfileStore {
         &self.provider_store
     }
 
-    /// Resolve a provider_id (e.g. "switcher-deepseek") to the real upstream
-    /// base_url. Used by the translation proxy to forward requests.
-    pub fn provider_base_url(&self, provider_id: &str) -> Option<String> {
+    /// Resolve a provider_id (e.g. "switcher-deepseek") to its real upstream
+    /// base_url and configured model. Used by the translation proxy to forward
+    /// requests and to force the provider's model regardless of what Codex's
+    /// model picker sends.
+    pub fn provider_upstream(&self, provider_id: &str) -> Option<(String, String)> {
         self.profile_directories()
             .into_iter()
             .find_map(|(_, dir)| {
                 self.provider_store
                     .read_provider(&dir)
                     .filter(|provider| provider.provider_id == provider_id)
-                    .map(|provider| provider.base_url)
+                    .map(|provider| (provider.base_url, provider.model))
             })
     }
 
