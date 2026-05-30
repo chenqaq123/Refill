@@ -437,7 +437,28 @@ impl ProfileStore {
         }
         if let Some(snapshot) = self.active_usage_snapshot_from_shared_history() {
             let _ = usage_service::write_usage_cache(&dir, &snapshot);
+            usage_service::record_usage_windows(&dir, std::slice::from_ref(&snapshot));
         }
+    }
+
+    /// Per-account rate-limit window history (official accounts only): each
+    /// weekly / short window period with the peak percentage consumed.
+    pub fn account_usage_history(&self, id: &str) -> Vec<crate::models::UsageWindowRecord> {
+        let dir = self.profile_url(id);
+        if self.provider_store.read_provider(&dir).is_some() {
+            return Vec::new();
+        }
+        // Backfill from the snapshots attributable to this account's active
+        // window (only one account is active at a time, so this is reliable).
+        let start = self.read_activation_date(&dir);
+        let end = if self.active_profile_id().as_deref() == Some(id) {
+            None
+        } else {
+            start.and_then(|activated| self.next_activation_after(activated))
+        };
+        let snapshots = usage_service::snapshots_between(&self.shared_sessions(), start, end);
+        usage_service::record_usage_windows(&dir, &snapshots);
+        usage_service::usage_history_records(&dir, Utc::now())
     }
 
     pub fn reconcile_usage_caches(&self) {

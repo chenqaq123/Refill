@@ -145,6 +145,16 @@ export type UsageSummary = {
   providers: ProviderUsage[];
 };
 
+export type UsageWindowRecord = {
+  kind: "primary" | "secondary";
+  label: string;
+  windowMinutes: number;
+  resetsAt?: number | null;
+  usedPercent: number;
+  lastSeen: string;
+  isCurrent: boolean;
+};
+
 export type AppSettings = {
   refreshIntervalSeconds: number;
   shareHistory: boolean;

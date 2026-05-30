@@ -5,9 +5,20 @@ use tauri::State;
 
 use crate::models::{
     Profile, ProviderInput, ProviderTestInput, ProviderTestResult, ProviderUpdateInput,
-    ProviderValidation, UsageSummary,
+    ProviderValidation, UsageSummary, UsageWindowRecord,
 };
 use crate::services::{app_state::AppState, desktop_state};
+
+#[tauri::command]
+pub async fn account_usage_history(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<Vec<UsageWindowRecord>, String> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.account_usage_history(&profile_id))
+        .await
+        .map_err(|error| error.to_string())
+}
 
 #[tauri::command]
 pub async fn usage_summary(state: State<'_, AppState>) -> Result<UsageSummary, String> {

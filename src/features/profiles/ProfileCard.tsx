@@ -15,6 +15,7 @@ type ProfileCardProps = {
   onLaunch: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  onUsage?: () => void;
 };
 
 function avatarText(profile: Profile) {
@@ -30,6 +31,7 @@ export function ProfileCard({
   onLaunch,
   onEdit,
   onDelete,
+  onUsage,
 }: ProfileCardProps) {
   const isApi = profile.kind === "api";
   const actionText = profile.isActive ? "重启" : "启动";
@@ -89,6 +91,18 @@ export function ProfileCard({
           </div>
           <div className="mt-1 truncate text-[11px] font-semibold text-sub/55">{shortPath(profile.diagnostics.profilePath)}</div>
         </div>
+      ) : onUsage ? (
+        <button
+          type="button"
+          title="查看用量历史"
+          className="rounded-2xl px-1 transition hover:bg-black/[0.03]"
+          onClick={(event) => {
+            event.stopPropagation();
+            onUsage();
+          }}
+        >
+          <UsageBadge usage={profile.usage} />
+        </button>
       ) : (
         <UsageBadge usage={profile.usage} />
       )}

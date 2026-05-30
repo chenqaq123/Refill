@@ -12,6 +12,7 @@ import type {
   SwitchProgress,
   SwitchResult,
   UsageSummary,
+  UsageWindowRecord,
 } from "./types";
 
 export const api = {
@@ -27,6 +28,8 @@ export const api = {
   testProviderConnection: (input: ProviderTestInput) =>
     invoke<ProviderTestResult>("test_provider_connection", { input }),
   usageSummary: () => invoke<UsageSummary>("usage_summary"),
+  accountUsageHistory: (profileId: string) =>
+    invoke<UsageWindowRecord[]>("account_usage_history", { profileId }),
   readProxyLog: () => invoke<string[]>("read_proxy_log"),
   openLoginTerminal: () => invoke<void>("open_login_terminal"),
   getSettings: () => invoke<AppSettings>("get_settings"),

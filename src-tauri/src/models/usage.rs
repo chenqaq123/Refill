@@ -39,6 +39,21 @@ pub struct UsageWindow {
     pub is_estimated_recovered: bool,
 }
 
+/// One rate-limit window period (identified by its reset time) with the peak
+/// percentage consumed during it. Used for the per-account usage history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageWindowRecord {
+    pub kind: String,
+    pub label: String,
+    pub window_minutes: i64,
+    pub resets_at: Option<f64>,
+    pub used_percent: f64,
+    pub last_seen: String,
+    #[serde(default)]
+    pub is_current: bool,
+}
+
 impl RawUsageWindow {
     pub fn into_effective(self, now: DateTime<Utc>) -> UsageWindow {
         let is_reset = self

@@ -8,6 +8,7 @@ import { relativeTime } from "../../lib/format";
 import { ProfileCard } from "../profiles/ProfileCard";
 import { ProviderDialog } from "../providers/ProviderDialog";
 import { UsageDialog } from "../usage/UsageDialog";
+import { AccountUsageDialog } from "../usage/AccountUsageDialog";
 import { DetailPanel } from "../settings/DetailPanel";
 
 export function Dashboard() {
@@ -19,6 +20,7 @@ export function Dashboard() {
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Profile | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [accountUsage, setAccountUsage] = useState<Profile | null>(null);
   const [toast, setToast] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
@@ -290,6 +292,7 @@ export function Dashboard() {
                   selected={selectedProfile?.id === profile.id}
                   onSelect={() => setSelectedId(profile.id)}
                   onLaunch={() => launch(profile)}
+                  onUsage={() => setAccountUsage(profile)}
                 />
               ))}
             </div>
@@ -358,6 +361,13 @@ export function Dashboard() {
       ) : null}
 
       <UsageDialog open={usageOpen} onClose={() => setUsageOpen(false)} />
+
+      <AccountUsageDialog
+        open={Boolean(accountUsage)}
+        profileId={accountUsage?.id ?? null}
+        title={accountUsage?.title ?? ""}
+        onClose={() => setAccountUsage(null)}
+      />
 
       <ProviderDialog
         open={providerDialogOpen}
