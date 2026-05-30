@@ -12,7 +12,7 @@
 //! is far more robust than mapping streaming deltas one-to-one, at the cost of
 //! the reply arriving in one chunk instead of token-by-token.
 
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -27,8 +27,9 @@ use axum::{
     routing::post,
     Router,
 };
-use futures::stream;
+use futures::StreamExt;
 use serde_json::{json, Value};
+use std::convert::Infallible;
 
 use super::profile_store::ProfileStore;
 
@@ -126,6 +127,8 @@ async fn handle_responses(
         model
     };
     chat_body["model"] = Value::String(effective_model.clone());
+    chat_body["stream"] = Value::Bool(true);
+    chat_body["stream_options"] = json!({ "include_usage": true });
     let endpoint = format!("{}/chat/completions", base_url.trim_end_matches('/'));
 
     let mut upstream = state.client.post(&endpoint).json(&chat_body);
@@ -147,36 +150,59 @@ async fn handle_responses(
     };
 
     let status = response.status();
-    let text = response.text().await.unwrap_or_default();
-    state.store.log_proxy(&format!(
-        "{provider} model={effective_model} -> {endpoint} {} ({} bytes)",
-        status.as_u16(),
-        text.len()
-    ));
     if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        state.store.log_proxy(&format!(
+            "{provider} model={effective_model} -> {endpoint} {} ({} bytes)",
+            status.as_u16(),
+            text.len()
+        ));
         return error_response(
             StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
             &format!("上游返回 {status}: {text}"),
         );
     }
 
-    let chat: Value = match serde_json::from_str(&text) {
-        Ok(value) => value,
-        Err(error) => {
-            return error_response(
-                StatusCode::BAD_GATEWAY,
-                &format!("上游响应不是合法 JSON：{error}"),
-            )
+    // Translate the upstream Chat Completions SSE stream into Responses events
+    // incrementally, so tokens (and reasoning) surface as they arrive.
+    let store = state.store.clone();
+    let log_provider = provider.clone();
+    let log_endpoint = endpoint.clone();
+    let sse_stream = async_stream::stream! {
+        let mut translator = StreamTranslator::new(&effective_model);
+        for event in translator.start() {
+            yield Ok::<Event, Infallible>(Event::default().data(event.to_string()));
         }
+        let mut byte_stream = response.bytes_stream();
+        let mut buffer = String::new();
+        while let Some(chunk) = byte_stream.next().await {
+            let Ok(bytes) = chunk else { break };
+            buffer.push_str(&String::from_utf8_lossy(&bytes));
+            while let Some(newline) = buffer.find('\n') {
+                let line: String = buffer.drain(..=newline).collect();
+                let line = line.trim();
+                let Some(payload) = line.strip_prefix("data:") else { continue };
+                let payload = payload.trim();
+                if payload.is_empty() || payload == "[DONE]" {
+                    continue;
+                }
+                if let Ok(value) = serde_json::from_str::<Value>(payload) {
+                    for event in translator.push(&value) {
+                        yield Ok(Event::default().data(event.to_string()));
+                    }
+                }
+            }
+        }
+        for event in translator.finish() {
+            yield Ok(Event::default().data(event.to_string()));
+        }
+        store.log_proxy(&format!(
+            "{log_provider} model={} -> {log_endpoint} 200 stream (in={} out={} reasoning={})",
+            effective_model, translator.usage_input, translator.usage_output, translator.usage_reasoning
+        ));
+        store.record_usage(&log_provider, &effective_model, translator.usage_input, translator.usage_output);
     };
-
-    let events = chat_to_responses_events(&chat, &effective_model);
-    let stream = stream::iter(
-        events
-            .into_iter()
-            .map(|event| Ok::<Event, std::convert::Infallible>(Event::default().data(event.to_string()))),
-    );
-    Sse::new(stream).into_response()
+    Sse::new(sse_stream).into_response()
 }
 
 fn error_response(status: StatusCode, message: &str) -> Response {
@@ -317,187 +343,340 @@ fn output_to_text(output: Option<&Value>) -> String {
 }
 
 // ----------------------------------------------------------------------------
-// Response synthesis: Chat Completions -> Responses SSE events
+// Streaming response translation: Chat Completions SSE -> Responses SSE
 // ----------------------------------------------------------------------------
 
-fn chat_to_responses_events(chat: &Value, model: &str) -> Vec<Value> {
-    let response_id = format!("resp_{}", unique_suffix());
-    let created_at = now_secs();
-    let message = chat
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-        .and_then(|choice| choice.get("message"));
+struct ToolAccum {
+    output_index: usize,
+    item_id: String,
+    call_id: String,
+    name: String,
+    args: String,
+}
 
-    let text = message
-        .and_then(|message| message.get("content"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
-    let tool_calls = message
-        .and_then(|message| message.get("tool_calls"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+/// Incrementally converts upstream Chat Completions stream chunks into Responses
+/// API SSE events. Tracks an optional reasoning item, an optional assistant
+/// message, and any number of function-call items, emitting open/delta/close
+/// events in Responses order.
+pub struct StreamTranslator {
+    response_id: String,
+    model: String,
+    created_at: u64,
+    next_index: usize,
 
-    let mut output_items: Vec<Value> = Vec::new();
-    let mut events: Vec<Value> = Vec::new();
+    reasoning_id: Option<String>,
+    reasoning_index: usize,
+    reasoning_text: String,
+    reasoning_closed: bool,
 
-    let base_response = |status: &str, output: &[Value]| {
+    message_id: Option<String>,
+    message_index: usize,
+    message_text: String,
+
+    tools: Vec<ToolAccum>,
+
+    pub usage_input: u64,
+    pub usage_output: u64,
+    pub usage_reasoning: u64,
+}
+
+impl StreamTranslator {
+    pub fn new(model: &str) -> Self {
+        Self {
+            response_id: format!("resp_{}", unique_suffix()),
+            model: model.to_string(),
+            created_at: now_secs(),
+            next_index: 0,
+            reasoning_id: None,
+            reasoning_index: 0,
+            reasoning_text: String::new(),
+            reasoning_closed: false,
+            message_id: None,
+            message_index: 0,
+            message_text: String::new(),
+            tools: Vec::new(),
+            usage_input: 0,
+            usage_output: 0,
+            usage_reasoning: 0,
+        }
+    }
+
+    fn response_obj(&self, status: &str, output: &[Value]) -> Value {
         json!({
-            "id": response_id,
+            "id": self.response_id,
             "object": "response",
-            "created_at": created_at,
+            "created_at": self.created_at,
             "status": status,
-            "model": model,
+            "model": self.model,
             "output": output,
         })
-    };
+    }
 
-    events.push(json!({ "type": "response.created", "response": base_response("in_progress", &[]) }));
-    events.push(json!({ "type": "response.in_progress", "response": base_response("in_progress", &[]) }));
+    pub fn start(&self) -> Vec<Value> {
+        vec![
+            json!({ "type": "response.created", "response": self.response_obj("in_progress", &[]) }),
+            json!({ "type": "response.in_progress", "response": self.response_obj("in_progress", &[]) }),
+        ]
+    }
 
-    let mut output_index = 0usize;
+    pub fn push(&mut self, chunk: &Value) -> Vec<Value> {
+        let mut events = Vec::new();
 
-    if !text.is_empty() {
-        let item_id = format!("msg_{}", unique_suffix());
+        if let Some(usage) = chunk.get("usage").filter(|usage| !usage.is_null()) {
+            self.capture_usage(usage);
+        }
+
+        let delta = chunk
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("delta"));
+        let Some(delta) = delta else {
+            return events;
+        };
+
+        if let Some(reasoning) = delta
+            .get("reasoning_content")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+        {
+            self.push_reasoning(reasoning, &mut events);
+        }
+
+        if let Some(content) = delta
+            .get("content")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+        {
+            self.close_reasoning(&mut events);
+            self.push_content(content, &mut events);
+        }
+
+        if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
+            for call in calls {
+                self.push_tool_call(call, &mut events);
+            }
+        }
+
+        events
+    }
+
+    pub fn finish(&mut self) -> Vec<Value> {
+        let mut events = Vec::new();
+        self.close_reasoning(&mut events);
+
+        let mut output: Vec<Value> = Vec::new();
+        if let Some(reasoning_id) = &self.reasoning_id {
+            output.push(json!({
+                "id": reasoning_id,
+                "type": "reasoning",
+                "summary": [{ "type": "summary_text", "text": self.reasoning_text }],
+            }));
+        }
+
+        if let Some(message_id) = self.message_id.clone() {
+            events.push(json!({
+                "type": "response.output_text.done",
+                "item_id": message_id,
+                "output_index": self.message_index,
+                "content_index": 0,
+                "text": self.message_text,
+            }));
+            events.push(json!({
+                "type": "response.content_part.done",
+                "item_id": message_id,
+                "output_index": self.message_index,
+                "content_index": 0,
+                "part": { "type": "output_text", "text": self.message_text, "annotations": [] }
+            }));
+            let item = json!({
+                "id": message_id,
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": self.message_text, "annotations": [] }]
+            });
+            events.push(json!({ "type": "response.output_item.done", "output_index": self.message_index, "item": item.clone() }));
+            output.push(item);
+        }
+
+        for tool in &self.tools {
+            events.push(json!({
+                "type": "response.function_call_arguments.done",
+                "item_id": tool.item_id,
+                "output_index": tool.output_index,
+                "arguments": tool.args,
+            }));
+            let item = json!({
+                "id": tool.item_id,
+                "type": "function_call",
+                "status": "completed",
+                "name": tool.name,
+                "arguments": tool.args,
+                "call_id": tool.call_id,
+            });
+            events.push(json!({ "type": "response.output_item.done", "output_index": tool.output_index, "item": item.clone() }));
+            output.push(item);
+        }
+
+        let mut completed = self.response_obj("completed", &output);
+        completed["usage"] = json!({
+            "input_tokens": self.usage_input,
+            "output_tokens": self.usage_output,
+            "total_tokens": self.usage_input + self.usage_output,
+        });
+        events.push(json!({ "type": "response.completed", "response": completed }));
+        events
+    }
+
+    fn push_reasoning(&mut self, text: &str, events: &mut Vec<Value>) {
+        if self.reasoning_id.is_none() {
+            let id = format!("rs_{}", unique_suffix());
+            self.reasoning_index = self.next_index;
+            self.next_index += 1;
+            self.reasoning_id = Some(id.clone());
+            events.push(json!({
+                "type": "response.output_item.added",
+                "output_index": self.reasoning_index,
+                "item": { "id": id, "type": "reasoning", "summary": [] }
+            }));
+            events.push(json!({
+                "type": "response.reasoning_summary_part.added",
+                "item_id": id,
+                "output_index": self.reasoning_index,
+                "summary_index": 0,
+                "part": { "type": "summary_text", "text": "" }
+            }));
+        }
+        self.reasoning_text.push_str(text);
         events.push(json!({
-            "type": "response.output_item.added",
-            "output_index": output_index,
-            "item": { "id": item_id, "type": "message", "status": "in_progress", "role": "assistant", "content": [] }
+            "type": "response.reasoning_summary_text.delta",
+            "item_id": self.reasoning_id.as_ref().unwrap(),
+            "output_index": self.reasoning_index,
+            "summary_index": 0,
+            "delta": text,
         }));
-        events.push(json!({
-            "type": "response.content_part.added",
-            "item_id": item_id,
-            "output_index": output_index,
-            "content_index": 0,
-            "part": { "type": "output_text", "text": "", "annotations": [] }
-        }));
+    }
+
+    fn close_reasoning(&mut self, events: &mut Vec<Value>) {
+        if self.reasoning_closed {
+            return;
+        }
+        if let Some(id) = self.reasoning_id.clone() {
+            events.push(json!({
+                "type": "response.reasoning_summary_text.done",
+                "item_id": id,
+                "output_index": self.reasoning_index,
+                "summary_index": 0,
+                "text": self.reasoning_text,
+            }));
+            events.push(json!({
+                "type": "response.reasoning_summary_part.done",
+                "item_id": id,
+                "output_index": self.reasoning_index,
+                "summary_index": 0,
+                "part": { "type": "summary_text", "text": self.reasoning_text }
+            }));
+            events.push(json!({
+                "type": "response.output_item.done",
+                "output_index": self.reasoning_index,
+                "item": { "id": id, "type": "reasoning", "summary": [{ "type": "summary_text", "text": self.reasoning_text }] }
+            }));
+            self.reasoning_closed = true;
+        }
+    }
+
+    fn push_content(&mut self, text: &str, events: &mut Vec<Value>) {
+        if self.message_id.is_none() {
+            let id = format!("msg_{}", unique_suffix());
+            self.message_index = self.next_index;
+            self.next_index += 1;
+            self.message_id = Some(id.clone());
+            events.push(json!({
+                "type": "response.output_item.added",
+                "output_index": self.message_index,
+                "item": { "id": id, "type": "message", "status": "in_progress", "role": "assistant", "content": [] }
+            }));
+            events.push(json!({
+                "type": "response.content_part.added",
+                "item_id": id,
+                "output_index": self.message_index,
+                "content_index": 0,
+                "part": { "type": "output_text", "text": "", "annotations": [] }
+            }));
+        }
+        self.message_text.push_str(text);
         events.push(json!({
             "type": "response.output_text.delta",
-            "item_id": item_id,
-            "output_index": output_index,
+            "item_id": self.message_id.as_ref().unwrap(),
+            "output_index": self.message_index,
             "content_index": 0,
             "delta": text,
         }));
-        events.push(json!({
-            "type": "response.output_text.done",
-            "item_id": item_id,
-            "output_index": output_index,
-            "content_index": 0,
-            "text": text,
-        }));
-        events.push(json!({
-            "type": "response.content_part.done",
-            "item_id": item_id,
-            "output_index": output_index,
-            "content_index": 0,
-            "part": { "type": "output_text", "text": text, "annotations": [] }
-        }));
-        let item = json!({
-            "id": item_id,
-            "type": "message",
-            "status": "completed",
-            "role": "assistant",
-            "content": [{ "type": "output_text", "text": text, "annotations": [] }]
-        });
-        events.push(json!({
-            "type": "response.output_item.done",
-            "output_index": output_index,
-            "item": item.clone(),
-        }));
-        output_items.push(item);
-        output_index += 1;
     }
 
-    for call in &tool_calls {
+    fn push_tool_call(&mut self, call: &Value, events: &mut Vec<Value>) {
+        let upstream_index = call.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
         let function = call.get("function");
-        let name = function
+        let name_fragment = function
             .and_then(|function| function.get("name"))
             .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let arguments = function
+            .unwrap_or("");
+        let args_fragment = function
             .and_then(|function| function.get("arguments"))
             .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let call_id = call
-            .get("id")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("call_{}", unique_suffix()));
-        let item_id = format!("fc_{}", unique_suffix());
+            .unwrap_or("");
+        let call_id = call.get("id").and_then(Value::as_str);
 
-        let pending = json!({
-            "id": item_id,
-            "type": "function_call",
-            "status": "in_progress",
-            "name": name,
-            "arguments": "",
-            "call_id": call_id,
-        });
-        events.push(json!({
-            "type": "response.output_item.added",
-            "output_index": output_index,
-            "item": pending,
-        }));
-        events.push(json!({
-            "type": "response.function_call_arguments.delta",
-            "item_id": item_id,
-            "output_index": output_index,
-            "delta": arguments,
-        }));
-        events.push(json!({
-            "type": "response.function_call_arguments.done",
-            "item_id": item_id,
-            "output_index": output_index,
-            "arguments": arguments,
-        }));
-        let item = json!({
-            "id": item_id,
-            "type": "function_call",
-            "status": "completed",
-            "name": name,
-            "arguments": arguments,
-            "call_id": call_id,
-        });
-        events.push(json!({
-            "type": "response.output_item.done",
-            "output_index": output_index,
-            "item": item.clone(),
-        }));
-        output_items.push(item);
-        output_index += 1;
+        // Find or create the accumulator for this upstream tool index.
+        if self.tools.get(upstream_index).is_none() {
+            // Grow to fit; upstream indices are sequential in practice.
+            while self.tools.len() <= upstream_index {
+                let output_index = self.next_index;
+                self.next_index += 1;
+                let item_id = format!("fc_{}", unique_suffix());
+                self.tools.push(ToolAccum {
+                    output_index,
+                    item_id: item_id.clone(),
+                    call_id: format!("call_{}", unique_suffix()),
+                    name: String::new(),
+                    args: String::new(),
+                });
+                events.push(json!({
+                    "type": "response.output_item.added",
+                    "output_index": output_index,
+                    "item": { "id": item_id, "type": "function_call", "status": "in_progress", "name": "", "arguments": "", "call_id": self.tools.last().unwrap().call_id }
+                }));
+            }
+        }
+
+        let tool = &mut self.tools[upstream_index];
+        if let Some(id) = call_id {
+            tool.call_id = id.to_string();
+        }
+        if !name_fragment.is_empty() {
+            tool.name.push_str(name_fragment);
+        }
+        if !args_fragment.is_empty() {
+            tool.args.push_str(args_fragment);
+            events.push(json!({
+                "type": "response.function_call_arguments.delta",
+                "item_id": tool.item_id,
+                "output_index": tool.output_index,
+                "delta": args_fragment,
+            }));
+        }
     }
 
-    let mut completed = base_response("completed", &output_items);
-    if let Some(usage) = chat.get("usage") {
-        completed["usage"] = convert_usage(usage);
+    fn capture_usage(&mut self, usage: &Value) {
+        self.usage_input = usage.get("prompt_tokens").and_then(Value::as_u64).unwrap_or(self.usage_input);
+        self.usage_output = usage.get("completion_tokens").and_then(Value::as_u64).unwrap_or(self.usage_output);
+        self.usage_reasoning = usage
+            .get("completion_tokens_details")
+            .and_then(|details| details.get("reasoning_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or(self.usage_reasoning);
     }
-    events.push(json!({ "type": "response.completed", "response": completed }));
-
-    events
-}
-
-fn convert_usage(usage: &Value) -> Value {
-    let input = usage
-        .get("prompt_tokens")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let output = usage
-        .get("completion_tokens")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let total = usage
-        .get("total_tokens")
-        .and_then(Value::as_u64)
-        .unwrap_or(input + output);
-    json!({
-        "input_tokens": input,
-        "output_tokens": output,
-        "total_tokens": total,
-    })
 }
 
 fn now_secs() -> u64 {
@@ -508,10 +687,13 @@ fn now_secs() -> u64 {
 }
 
 fn unique_suffix() -> String {
-    SystemTime::now()
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| format!("{:x}", duration.as_nanos()))
-        .unwrap_or_else(|_| "0".to_string())
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{nanos:x}{seq:x}")
 }
 
 #[cfg(test)]
@@ -583,55 +765,78 @@ mod tests {
         assert_eq!(converted["function"]["description"], "run");
     }
 
-    #[test]
-    fn synthesizes_text_event_sequence() {
-        let chat = json!({
-            "choices": [{ "message": { "role": "assistant", "content": "Hello world" } }],
-            "usage": { "prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5 }
-        });
-        let events = chat_to_responses_events(&chat, "deepseek-chat");
-        let types: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
-        assert_eq!(types.first(), Some(&"response.created"));
-        assert!(types.contains(&"response.output_text.delta"));
-        assert!(types.contains(&"response.output_item.done"));
-        assert_eq!(types.last(), Some(&"response.completed"));
+    fn all_events(model: &str, chunks: &[Value]) -> Vec<Value> {
+        let mut translator = StreamTranslator::new(model);
+        let mut events = translator.start();
+        for chunk in chunks {
+            events.extend(translator.push(chunk));
+        }
+        events.extend(translator.finish());
+        events
+    }
 
-        let delta = events
-            .iter()
-            .find(|e| e["type"] == "response.output_text.delta")
-            .unwrap();
-        assert_eq!(delta["delta"], "Hello world");
-
-        let completed = events.last().unwrap();
-        assert_eq!(completed["response"]["status"], "completed");
-        assert_eq!(completed["response"]["output"][0]["content"][0]["text"], "Hello world");
-        assert_eq!(completed["response"]["usage"]["input_tokens"], 3);
+    fn types_of(events: &[Value]) -> Vec<String> {
+        events.iter().map(|e| e["type"].as_str().unwrap_or("").to_string()).collect()
     }
 
     #[test]
-    fn synthesizes_tool_call_events() {
-        let chat = json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": Value::Null,
-                    "tool_calls": [{
-                        "id": "call_1",
-                        "type": "function",
-                        "function": { "name": "shell", "arguments": "{\"cmd\":\"ls\"}" }
-                    }]
-                }
-            }]
-        });
-        let events = chat_to_responses_events(&chat, "deepseek-chat");
-        let types: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
-        assert!(types.contains(&"response.function_call_arguments.done"));
-        let done = events
+    fn streams_text_token_by_token() {
+        let chunks = vec![
+            json!({ "choices": [{ "delta": { "content": "Hello" } }] }),
+            json!({ "choices": [{ "delta": { "content": " world" } }] }),
+            json!({ "choices": [{ "delta": {} }], "usage": { "prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5 } }),
+        ];
+        let events = all_events("deepseek-chat", &chunks);
+        let types = types_of(&events);
+        assert_eq!(types.first().map(String::as_str), Some("response.created"));
+        assert_eq!(types.last().map(String::as_str), Some("response.completed"));
+        // Two separate content deltas were emitted (true streaming).
+        let deltas: Vec<&str> = events
             .iter()
-            .find(|e| e["type"] == "response.output_item.done")
-            .unwrap();
-        assert_eq!(done["item"]["type"], "function_call");
+            .filter(|e| e["type"] == "response.output_text.delta")
+            .map(|e| e["delta"].as_str().unwrap())
+            .collect();
+        assert_eq!(deltas, vec!["Hello", " world"]);
+        let completed = events.last().unwrap();
+        assert_eq!(completed["response"]["output"][0]["content"][0]["text"], "Hello world");
+        assert_eq!(completed["response"]["usage"]["input_tokens"], 3);
+        assert_eq!(completed["response"]["usage"]["output_tokens"], 2);
+    }
+
+    #[test]
+    fn streams_reasoning_then_content() {
+        let chunks = vec![
+            json!({ "choices": [{ "delta": { "reasoning_content": "think..." } }] }),
+            json!({ "choices": [{ "delta": { "content": "answer" } }] }),
+        ];
+        let events = all_events("deepseek-reasoner", &chunks);
+        let types = types_of(&events);
+        assert!(types.contains(&"response.reasoning_summary_text.delta".to_string()));
+        // reasoning item (index 0) is closed before the message (index 1) opens.
+        let reasoning_done = events.iter().position(|e| e["type"] == "response.output_item.done" && e["item"]["type"] == "reasoning").unwrap();
+        let message_added = events.iter().position(|e| e["type"] == "response.output_item.added" && e["item"]["type"] == "message").unwrap();
+        assert!(reasoning_done < message_added);
+        let completed = events.last().unwrap();
+        assert_eq!(completed["response"]["output"][0]["type"], "reasoning");
+        assert_eq!(completed["response"]["output"][1]["type"], "message");
+    }
+
+    #[test]
+    fn streams_tool_call_fragments() {
+        let chunks = vec![
+            json!({ "choices": [{ "delta": { "tool_calls": [{ "index": 0, "id": "call_1", "function": { "name": "shell", "arguments": "{\"cmd\":" } }] } }] }),
+            json!({ "choices": [{ "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": "\"ls\"}" } }] } }] }),
+        ];
+        let events = all_events("deepseek-chat", &chunks);
+        let args_deltas: Vec<&str> = events
+            .iter()
+            .filter(|e| e["type"] == "response.function_call_arguments.delta")
+            .map(|e| e["delta"].as_str().unwrap())
+            .collect();
+        assert_eq!(args_deltas, vec!["{\"cmd\":", "\"ls\"}"]);
+        let done = events.iter().find(|e| e["type"] == "response.output_item.done" && e["item"]["type"] == "function_call").unwrap();
         assert_eq!(done["item"]["name"], "shell");
+        assert_eq!(done["item"]["arguments"], "{\"cmd\":\"ls\"}");
         assert_eq!(done["item"]["call_id"], "call_1");
     }
 }

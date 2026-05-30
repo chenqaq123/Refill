@@ -81,6 +81,32 @@ impl ProfileStore {
         }
     }
 
+    /// Append one structured usage record (one JSON object per line) for the
+    /// cost/usage dashboard. Size-capped like the request log.
+    pub fn record_usage(&self, provider_id: &str, model: &str, input_tokens: u64, output_tokens: u64) {
+        use std::io::Write;
+        const MAX_BYTES: u64 = 4 * 1024 * 1024;
+        let dir = self.shared_history_root();
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("usage.jsonl");
+        if fs::metadata(&path)
+            .map(|meta| meta.len() >= MAX_BYTES)
+            .unwrap_or(false)
+        {
+            let _ = fs::rename(&path, dir.join("usage.jsonl.1"));
+        }
+        let record = serde_json::json!({
+            "ts": Utc::now().to_rfc3339(),
+            "provider": provider_id,
+            "model": model,
+            "input": input_tokens,
+            "output": output_tokens,
+        });
+        if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(file, "{record}");
+        }
+    }
+
     /// Resolve a provider_id (e.g. "switcher-deepseek") to its real upstream
     /// base_url and configured model. Used by the translation proxy to forward
     /// requests and to force the provider's model regardless of what Codex's
