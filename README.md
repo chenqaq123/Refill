@@ -10,6 +10,8 @@ of each account's plan you've burned, and what your API spend looks like.
 
 > Status: actively developed. Built with Tauri (Rust) + React.
 
+![Refill — accounts](docs/screenshot-accounts.png)
+
 ---
 
 ## English
