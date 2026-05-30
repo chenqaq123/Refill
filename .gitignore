@@ -5,3 +5,6 @@ node_modules/
 web-dist/
 src-tauri/gen/
 src-tauri/target/
+
+# Updater signing keys — never commit the private key
+.tauri-keys/

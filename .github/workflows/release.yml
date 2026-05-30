@@ -1,0 +1,57 @@
+name: Release
+
+# Builds, signs, (optionally) notarizes, and publishes a Refill release with a
+# Tauri updater manifest (latest.json) whenever a v* tag is pushed.
+#
+# Required repository secrets (see RELEASING.md for how to obtain each):
+#   TAURI_SIGNING_PRIVATE_KEY            – updater private key (.tauri-keys/refill-updater.key contents)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD   – its password ("" if none)
+#   APPLE_CERTIFICATE                    – base64 of your Developer ID Application .p12
+#   APPLE_CERTIFICATE_PASSWORD           – the .p12 password
+#   APPLE_SIGNING_IDENTITY               – e.g. "Developer ID Application: Your Name (TEAMID)"
+#   APPLE_ID                             – your Apple ID email
+#   APPLE_PASSWORD                       – app-specific password for notarization
+#   APPLE_TEAM_ID                        – your 10-char Team ID
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Refill ${{ github.ref_name }}"
+          releaseBody: "See the assets below to download and install."
+          releaseDraft: true
+          prerelease: false
+          args: --target universal-apple-darwin
+          includeUpdaterJson: true
