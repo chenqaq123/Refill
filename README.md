@@ -62,11 +62,25 @@ or provider is active.
 - **Built to grow** — the tool rail is ready for more than Codex (Claude Code,
   Gemini CLI… are scaffolded).
 
+### Requirements
+- **Apple Silicon Mac** — the current release is arm64‑only (no Intel build yet).
+- **Codex Desktop installed** — Refill switches accounts *for* Codex, so install
+  the Codex app first.
+
 ### Install
-1. Download the latest `.dmg` from [Releases](../../releases).
-2. Open it and drag **Refill** to Applications.
-3. The app is not yet notarized, so on first launch right‑click it and choose
-   **Open** (or run `xattr -dr com.apple.quarantine /Applications/Refill.app`).
+1. Download the latest `.dmg` from [Releases](../../releases) and drag **Refill**
+   to Applications.
+2. The app isn't Apple‑notarized yet, so the first launch is blocked by
+   Gatekeeper ("Apple could not verify…"). Allow it **once**, either:
+   - **Terminal:** `xattr -dr com.apple.quarantine /Applications/Refill.app`, or
+   - **System Settings → Privacy & Security →** after trying to open it once,
+     click **Open Anyway**.
+3. Keep Refill running while you use a Chat‑Completions provider (the local
+   translation proxy lives inside the app).
+
+> Want a frictionless, double‑click install? That needs Apple Developer ID
+> signing + notarization — the pipeline is ready in `RELEASING.md` and just
+> needs an Apple Developer account.
 
 ### Build from source
 Requires Rust, Node 20+, and the Tauri prerequisites.
