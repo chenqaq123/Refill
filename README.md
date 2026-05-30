@@ -1,16 +1,30 @@
 # Refill
 
-**One switcher for all your Codex accounts and API providers — with one shared history.**
-**一个开关，管理你所有的 Codex 账号与 API provider —— 共享同一条对话历史。**
+**Run many official Codex accounts as one — switch instantly, never lose your conversation history.**
+**多个官方 Codex 账号当一个用 —— 一键切换，对话历史永不丢失。**
 
-Refill is a macOS app that lets you switch between multiple official Codex
-(ChatGPT) accounts and third‑party API providers in one click, while keeping a
-single, unified conversation history across all of them. It also shows how much
-of each account's plan you've burned, and what your API spend looks like.
+Refill is a macOS app built around two things that normally break when you use
+more than one Codex (ChatGPT) account:
+
+1. **Multiple official accounts, first‑class.** Keep all your Codex logins side
+   by side and switch between them in one click — no re‑login, no juggling
+   `~/.codex`.
+2. **One conversation history across all of them.** Your sessions, threads and
+   projects are shared, so switching accounts never makes your history
+   disappear — it's always there under whichever account is active.
+
+On top of that it can also drive third‑party API providers (DeepSeek, OpenRouter,
+…) and show your plan usage and API spend.
 
 > Status: actively developed. Built with Tauri (Rust) + React.
 
 ![Refill — accounts](docs/screenshot-accounts.png)
+
+### Core advantages / 核心优势
+- 🔑 **Multi‑account, zero friction** — many official Codex accounts, one‑click
+  switching. 多个官方账号，一键无缝切换。
+- 🧵 **Unified, persistent history** — one shared conversation history that
+  survives every switch. 跨账号共享、切换不丢的统一对话历史。
 
 ---
 
@@ -26,9 +40,15 @@ Refill makes switching instant and **keeps one history** no matter which account
 or provider is active.
 
 ### Features
-- **One‑click account switching** — official Codex accounts and API providers.
-- **Shared conversation history** — sessions, thread state and projects are
-  shared across every profile, so history never disappears when you switch.
+**The headline features:**
+- **Multiple official Codex accounts** — keep all your ChatGPT/Codex logins and
+  switch with one click. No re‑login, no manual `~/.codex` swapping; the active
+  account is always clear at a glance.
+- **History that survives every switch** — sessions, thread state and projects
+  are shared across all accounts via a single store, so your conversation
+  history is never lost or fragmented when you change accounts.
+
+**Plus:**
 - **Use Chat‑Completions‑only providers with Codex** — Codex only speaks the
   OpenAI *Responses API*. Refill runs a built‑in local proxy that translates to
   and from Chat Completions, so providers like **DeepSeek** work transparently —
@@ -79,17 +99,24 @@ anywhere except the API requests you make to your own providers.
 ## 中文
 
 ### 为什么做它
-- 你有多个 Codex/ChatGPT 账号，用来绕开每周额度限制。
-- 你也想在 Codex 里用更便宜 / 不同的模型（DeepSeek、OpenRouter、Kimi、本地
-  Ollama 等）。
-- 但平时切换账号会丢历史、还要重新登录。
+Refill 围绕「用多个 Codex 账号时最容易坏的两件事」来设计：
 
-Refill 让切换变成一键完成，并且**无论用哪个账号或 provider，都共享同一条历史**。
+1. **多个官方账号，一等公民。** 把你所有 Codex 登录并排放着，一键切换——不用重新
+   登录、不用手动倒腾 `~/.codex`。
+2. **跨账号共享同一条对话历史。** 会话、线程、项目都共享，切换账号历史绝不消失，
+   始终在当前账号下完整可见。
+
+在此之上，它还能驱动第三方 API provider（DeepSeek、OpenRouter…），并展示套餐额度
+与 API 花费。
 
 ### 功能
-- **一键切换账号** —— 官方 Codex 账号与 API provider 都支持。
-- **共享对话历史** —— 会话、线程状态、项目列表在所有 profile 间共享，切换账号
-  历史也不会消失。
+**两个核心卖点：**
+- **多官方 Codex 账号** —— 所有 ChatGPT/Codex 登录并存，一键切换；无需重新登录、
+  无需手动切 `~/.codex`，当前账号一目了然。
+- **切换不丢的历史** —— 会话、线程状态、项目列表通过统一存储在所有账号间共享，
+  换账号时对话历史既不丢失也不割裂。
+
+**此外：**
 - **让只支持 Chat Completions 的 provider 也能用 Codex** —— Codex 只会说 OpenAI
   的 *Responses API*。Refill 内置一个本地代理做双向协议翻译，于是 **DeepSeek**
   这类服务可以透明接入，并且**支持流式输出、思维链、工具调用**。
